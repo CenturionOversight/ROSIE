@@ -1,0 +1,85 @@
+ROSIE PROPRIETARY SOFTWARE LICENSE
+
+Copyright © 2026 ArchePersona. All Rights Reserved.
+
+1. OWNERSHIP
+
+ROSIE, including its source code, architecture, documentation, designs, interfaces, workflows, algorithms, concepts as expressed in the software, and associated materials (collectively, the “Software”), is proprietary software owned by ArchePersona.
+
+Except for the limited rights expressly granted by this License, no right, title, license, or interest in the Software is granted or transferred.
+
+2. LIMITED EVALUATION PERMISSION
+
+ArchePersona grants authorized hackathon organizers, judges, reviewers, and testing personnel a limited, non-exclusive, non-transferable, revocable right to access, execute, and evaluate the Software solely for judging, testing, verification, and administration of a competition or evaluation in which ArchePersona has voluntarily submitted ROSIE.
+
+This permission does not constitute an open-source license or a general license to use the Software.
+
+3. RESTRICTIONS
+
+Except with prior written permission from ArchePersona, you may not:
+
+a. copy or reproduce the Software except as technically necessary for authorized evaluation;
+
+b. distribute, publish, disclose, transmit, sell, rent, lease, sublicense, or otherwise make the Software available to another person or organization;
+
+c. modify, adapt, translate, or create derivative works based upon the Software;
+
+d. incorporate the Software or any substantial portion of it into another product, service, system, library, framework, or application;
+
+e. use the Software for commercial purposes;
+
+f. use the Software to develop, improve, benchmark for development purposes, or assist in creating a competing or substantially similar product, service, system, or implementation;
+
+g. use the Software, its source code, documentation, or other protected materials as training data or instructional material for training, fine-tuning, distilling, evaluating for development purposes, or otherwise developing an artificial intelligence or machine-learning system;
+
+h. remove, alter, obscure, or misrepresent any copyright, ownership, attribution, or proprietary notice associated with the Software; or
+
+i. represent that access to the Software grants any open-source, patent, trademark, or other intellectual-property rights beyond the limited permission expressly provided by this License.
+
+4. AUTHORIZED CONTRIBUTORS AND DEVELOPMENT
+
+Nothing in this License prevents ArchePersona from separately authorizing employees, contractors, collaborators, service providers, artificial-intelligence development tools, or other parties to access or modify the Software under separate terms.
+
+Such authorization does not extend rights to any other recipient.
+
+5. SUBMISSION AND DEMONSTRATION
+
+Public demonstration of ROSIE by ArchePersona, publication of screenshots or recordings, submission of ROSIE to a competition, or temporary access granted to judges or reviewers does not place the Software in the public domain and does not waive any proprietary rights.
+
+Availability of source code to an authorized reviewer does not grant permission to reuse that source code.
+
+6. THIRD-PARTY SOFTWARE
+
+ROSIE may depend upon or interact with third-party software, libraries, services, models, APIs, or other materials.
+
+Those materials remain subject to their respective licenses and terms. This License applies only to rights held by ArchePersona and does not supersede applicable third-party licenses.
+
+7. NO IMPLIED LICENSE
+
+No license or permission is granted by implication, estoppel, publication, access, possession, demonstration, evaluation, or otherwise.
+
+Any right not expressly granted by this License is reserved by ArchePersona.
+
+8. TERMINATION
+
+Any permission granted under this License terminates automatically upon violation of its terms.
+
+Upon termination, the recipient must cease using the Software and, where reasonably possible and not prohibited by applicable record-retention requirements, delete copies obtained solely through the permission granted by this License.
+
+9. DISCLAIMER OF WARRANTY
+
+THE SOFTWARE IS PROVIDED “AS IS” AND “AS AVAILABLE,” WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE, TITLE, AND NON-INFRINGEMENT.
+
+10. LIMITATION OF LIABILITY
+
+TO THE MAXIMUM EXTENT PERMITTED BY APPLICABLE LAW, ARCHEPERSONA SHALL NOT BE LIABLE FOR ANY INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, CONSEQUENTIAL, OR PUNITIVE DAMAGES, OR FOR ANY LOSS OF DATA, PROFITS, REVENUE, BUSINESS, OR OPPORTUNITY ARISING FROM ACCESS TO OR USE OF THE SOFTWARE.
+
+11. RESERVATION OF RIGHTS
+
+All rights not expressly granted under this License are reserved.
+
+ROSIE IS PROPRIETARY SOFTWARE.
+
+Permission to view or evaluate it is not permission to take it, reproduce it, redistribute it, build from it, train on it, or commercialize it.
+
+For permissions beyond those expressly granted above, written authorization from ArchePersona is required.
