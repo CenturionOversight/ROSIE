@@ -4,6 +4,12 @@ HACKASS is the project being built for Google's 2026 All Things Agentic Hackatho
 
 ROSIE is the product identity used outside the hackathon-facing provenance distinction. For the hackathon submission, this document keeps HACKASS separate from the pre-existing ARCHESTRATOR software incorporated into it so the submission accurately discloses prior work.
 
+## Competition track
+
+**Taskmaster** is the selected competition track.
+
+HACKASS fits Taskmaster because it accepts a task, reasons across multiple steps through Google ADK and Gemini 3.5+, invokes real tools through the incorporated ARCHESTRATOR execution layer, and returns the completed result. The submission and demo should emphasize autonomous task completion and real tool execution rather than conversational collaboration or multi-agent fleet behavior.
+
 ## Hackathon provenance
 
 The official rules require projects to be newly created during the Submission Period (Aug 3, 2026 – Aug 31, 2026, 5:00pm PT). Standard development tools, frameworks, libraries, starter templates, and AI coding assistants may be used, but other pre-existing code or work incorporated into the Project must be disclosed.
@@ -82,18 +88,20 @@ Browser
 
 Real execution has been verified both locally and through the live deployed service:
 
-1. ADK `LlmAgent` created with `gemini-3.5-flash` model via Vertex AI;
-2. Agent requested `inspect_file(relative_path="README.md")`;
-3. Bridge adapter called `wrapper.tools.dispatch_tool("inspect_file", ...)`;
-4. ARCHESTRATOR read the file and returned content;
-5. Gemini produced a final response quoting README.md content;
-6. Result returned as `{"status": "ok", "result": "..."}` HTTP response via `POST /execute`.
+1. ADK `LlmAgent` created with `gemini-3.5-flash` via Vertex AI;
+2. the agent requested real ARCHESTRATOR tools;
+3. the bridge delegated requests to `wrapper.tools.dispatch_tool()`;
+4. ARCHESTRATOR performed real workspace actions;
+5. Gemini used the tool results to produce the final response;
+6. the result returned through `POST /execute` to the browser.
+
+The Taskmaster demo candidate verifies multi-step execution by reading the expected test count from `README.md`, running the test suite, comparing expected and actual results, and reporting the outcome.
 
 ## Submission artifacts
 
 The current rules call for:
 
-- one selected competition category (Taskmaster, Collaborative Partner, or Fortified Enterprise Fleet);
+- one selected competition category — **Taskmaster selected**;
 - a hosted project URL;
 - project description and technology summary;
 - a public or private source repository;
@@ -102,53 +110,46 @@ The current rules call for:
 - a public demo video up to four minutes;
 - visible proof in the demo that the backend is running on Google Cloud.
 
-For a private repository, the rules require repository access for the hackathon judging accounts: `testing@devpost.com` and `cloudhackathons@google.com`.
+For a private repository, the rules require repository access for the hackathon judging accounts. The submission repository is currently public.
 
 ## Currently implemented
 
 - Google ADK 2.8.0 integrated as the hackathon-specific execution framework;
 - Gemini 3.5+ (`gemini-3.5-flash`) configured via Vertex AI on `rosie-fire`;
-- Five ARCHESTRATOR tools bridged to ADK without duplicating their logic;
+- five ARCHESTRATOR tools bridged to ADK without duplicating their logic;
 - `POST /execute` HTTP endpoint in `server.py` calling `run_hackass()`;
 - Firebase Hosting `/execute` route forwarding to Cloud Run;
-- Browser interface with enabled input and real result display;
-- Concurrency lock serializes `/execute` to protect shared ARCHESTRATOR state;
-- Real agent execution verified locally and live through `https://rosie-fire.web.app`;
+- browser interface with enabled input and real result display;
+- concurrency lock serializing `/execute` to protect shared ARCHESTRATOR state;
+- real agent execution verified locally and live through `https://rosie-fire.web.app`;
 - Cloud Run and Firebase Hosting live and healthy;
 - 21 focused HACKASS tests + 16 focused server tests pass; full regression suite passes (154 passed, 1 skipped).
 
 ## Currently not implemented
 
-- Authentication on the `/execute` endpoint (currently anonymous — acceptable for hackathon demo scope);
-- Persistent conversation history across requests (each request is a fresh ADK session);
-- Per-user workspaces;
-- Demo video (pending recording);
-- Devpost submission entry.
-
-## Track selection
-
-No final competition category is selected yet. The three official tracks are:
-
-- **Taskmaster** — multi-step background workflow agent;
-- **Collaborative Partner** — clarifying questions and guided interaction;
-- **Fortified Enterprise Fleet** — scalable institutional agent network.
-
-HACKASS primarily demonstrates Taskmaster characteristics (autonomous multi-step task execution with real tool use and file/shell actions). Track selection is pending Darren's decision.
+- authentication on the `/execute` endpoint;
+- persistent conversation history across requests;
+- per-user workspaces;
+- demo video;
+- final Devpost submission.
 
 ## Submission checklist
 
 Before the deadline (Aug 31, 2026, 5:00pm PT):
 
-- [ ] HACKASS is clearly identified as the newly created hackathon project;
-- [ ] ARCHESTRATOR is clearly disclosed as pre-existing incorporated software;
-- [ ] hackathon-created work is distinguished from the incorporated ARCHESTRATOR foundation;
-- [ ] Gemini version/path is compliant (`gemini-3.5-flash` via Vertex AI);
-- [ ] Google ADK is genuinely in the execution path (2.8.0);
-- [ ] At least one Google Cloud infrastructure service is genuinely used (Cloud Run, Firebase Hosting);
-- [ ] Architecture diagram matches reality;
-- [ ] Local/cloud spin-up instructions are reproducible;
-- [ ] Repository judge access is configured (public or private with `testing@devpost.com` + `cloudhackathons@google.com`);
-- [ ] Cloud Run deployment is live and verifiable;
-- [ ] Demo video (max 4 min) shows live execution + Google Cloud proof;
-- [ ] Devpost submission entry is created with all required fields;
-- [ ] Post-deadline freeze rule is respected (no edits after submission period ends).
+- [x] Taskmaster selected as the competition track;
+- [x] HACKASS clearly identified as the newly created hackathon project;
+- [x] ARCHESTRATOR clearly disclosed as pre-existing incorporated software;
+- [x] hackathon-created work distinguished from the incorporated ARCHESTRATOR foundation;
+- [x] Gemini path implemented (`gemini-3.5-flash` via Vertex AI);
+- [x] Google ADK genuinely in the execution path (2.8.0);
+- [x] Google Cloud infrastructure genuinely used;
+- [x] architecture documentation matches the implemented path;
+- [x] repository is public;
+- [x] Cloud Run deployment verified live;
+- [ ] record and publish demo video (max 4 min) showing live Taskmaster execution + Google Cloud proof;
+- [ ] add final demo video URL to submission;
+- [ ] create/finalize Devpost entry using `docs/SUBMISSION.md`;
+- [ ] perform final pre-submission live check;
+- [ ] submit before deadline;
+- [ ] respect post-deadline judging freeze.
