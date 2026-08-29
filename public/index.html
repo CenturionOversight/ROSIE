@@ -1,5 +1,45 @@
 ﻿<!DOCTYPE html>
-<html>
-<head><title>ROSIE</title></head>
-<body><h1>ROSIE — Agentic CLI</h1><p>Status: initializing...</p></body>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ROSIE</title>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <header class="header">
+    <h1>ROSIE</h1>
+    <p class="subtitle">Agentic CLI with browser interface</p>
+  </header>
+
+  <section class="status-bar">
+    <span id="backend-status" class="status-indicator connecting">Connecting to backend...</span>
+  </section>
+
+  <main class="main-content">
+    <section class="panel">
+      <h2>Conversation</h2>
+      <div id="conversation" class="conversation-area">
+        <p class="placeholder">No conversation history yet.</p>
+      </div>
+    </section>
+
+    <section class="panel">
+      <h2>Input</h2>
+      <form id="input-form" class="input-form" autocomplete="off">
+        <textarea
+          id="prompt-input"
+          name="prompt"
+          placeholder="ROSIE interaction endpoint is not yet available."
+          disabled
+          rows="3"
+        ></textarea>
+        <button type="submit" disabled>Send</button>
+      </form>
+      <p class="hint">The backend /health endpoint is reachable, but ROSIE execution from the browser is not yet implemented.</p>
+    </section>
+  </main>
+
+  <script src="/app.js"></script>
+</body>
 </html>

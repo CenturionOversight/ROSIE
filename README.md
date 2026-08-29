@@ -233,8 +233,21 @@ firebase deploy --only hosting --project rosie-fire
 
 ### Portability
 
-The ROSIE application code does not depend on any Google Cloud APIs for normal operation. Google-specific integration is isolated to:
+The ROSIE application code does not depend on any Google-specific runtime APIs for normal operation. Google-specific integration is isolated to:
 - `server.py` — the HTTP boundary layer
 - `Dockerfile` — the container packaging
 
 The same container can be deployed to any container platform. See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the full architecture and boundary documentation.
+
+## Web interface
+
+ROSIE has a minimal web interface deployed at `https://rosie-fire.web.app`.
+
+| Layer | Technology | Purpose |
+|-------|-----------|---------|
+| Static frontend | HTML/CSS/JS (no framework) | Landing page, backend status, reserved interaction area |
+| Firebase Hosting | Static host + proxy | Serves static files, proxies `/health` to Cloud Run |
+| Cloud Run | `rosie-api` | Containerized Python HTTP server (`server.py`) |
+| ROSIE core | `wrapper/` | Agent loop, tools, approval policy |
+
+The web interface currently displays backend connectivity status via the `/health` endpoint. The ROSIE interaction/input area is visually reserved but functionally disabled — browser-based execution is not yet implemented. See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the current vs future architecture boundary.
