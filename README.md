@@ -155,6 +155,13 @@ See [docs/TESTING.md](docs/TESTING.md).
 ROSIE/
 ├── README.md
 ├── requirements.txt
+├── Dockerfile
+├── .dockerignore
+├── .firebaserc
+├── firebase.json
+├── server.py
+├── public/
+│   └── index.html
 ├── wrapper/
 │   ├── __init__.py
 │   ├── cli.py
@@ -172,6 +179,62 @@ ROSIE/
 └── docs/
 ```
 
-## Current project status
+## Cloud deployment
 
-ROSIE's existing local-first agent runtime is operational and tested. Google-specific agent-framework and Google Cloud integration for the All Things Agentic hackathon has not yet been added to the current core. The existing Gemini support is generic LiteLLM provider support rather than a Google Agent Framework integration.
+ROSIE runs as a containerized HTTP service on Google Cloud Run under the `rosie-fire` project.
+
+### Container image
+
+The Docker image is built from `python:3.14-slim`, installs dependencies from `requirements.txt`, and runs `python -m server` as the entrypoint. The server binds to the `PORT` environment variable (default 8080).
+
+### Local container run
+
+```bash
+docker build -t rosie .
+docker run -p 8080:8080 rosie
+curl http://localhost:8080/health
+```
+
+### Google Cloud Run service
+
+| Field | Value |
+|-------|-------|
+| Service name | `rosie-api` |
+| Region | `us-central1` |
+| Project | `rosie-fire` |
+| Image | `us-central1-docker.pkg.dev/rosie-fire/rosie-images/rosie-api` |
+| URL | `https://rosie-api-rqcuxs7u6a-uc.a.run.app` |
+
+### Firebase Hosting
+
+Firebase Hosting acts as a static-frontend proxy to Cloud Run. The `/health` route (and future backend routes) is rewritten to the Cloud Run service; all other paths serve static files from `public/`.
+
+Hosting URL: `https://rosie-fire.web.app`
+
+The routing is configured in `firebase.json` using Firebase Hosting's Cloud Run rewrite mechanism. There is no Firebase Functions dependency.
+
+### Deployment
+
+```bash
+# Build and push the container image
+docker build -t us-central1-docker.pkg.dev/rosie-fire/rosie-images/rosie-api .
+docker push us-central1-docker.pkg.dev/rosie-fire/rosie-images/rosie-api
+
+# Deploy to Cloud Run
+gcloud run deploy rosie-api \
+  --image us-central1-docker.pkg.dev/rosie-fire/rosie-images/rosie-api \
+  --project=rosie-fire \
+  --region=us-central1 \
+  --allow-unauthenticated
+
+# Deploy Firebase Hosting
+firebase deploy --only hosting --project rosie-fire
+```
+
+### Portability
+
+The ROSIE application code does not depend on any Google Cloud APIs for normal operation. Google-specific integration is isolated to:
+- `server.py` — the HTTP boundary layer
+- `Dockerfile` — the container packaging
+
+The same container can be deployed to any container platform. See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the full architecture and boundary documentation.

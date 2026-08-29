@@ -18,7 +18,14 @@ The existing core already provides:
 - model-provider abstraction through LiteLLM;
 - generic Gemini access through LiteLLM when configured.
 
-The current repository does **not** yet contain a Google Agent Framework integration or Google Cloud deployment infrastructure.
+The current repository does **not** yet contain a Google Agent Framework integration. The following Google Cloud deployment infrastructure has been established:
+
+- A containerized Python HTTP server (`server.py`) that imports and wraps ROSIE's core
+- A Dockerfile producing a portable container image
+- Cloud Run deployment under the `rosie-fire` project (`us-central1`, service name `rosie-api`)
+- Firebase Hosting (`https://rosie-fire.web.app`) routing `/health` to Cloud Run
+
+The existing Gemini support is generic LiteLLM provider support rather than a Google Agent Framework integration.
 
 ## Mandatory hackathon technology
 
@@ -80,7 +87,25 @@ The diagram must be updated when the Google-specific execution path is implement
 
 The root [README.md](../README.md) contains the current local ROSIE setup and execution instructions.
 
-Cloud deployment instructions must be added only after the deployment architecture exists and has been verified.
+Cloud deployment instructions have been added:
+
+```bash
+# Build and push
+docker build -t us-central1-docker.pkg.dev/rosie-fire/rosie-images/rosie-api .
+docker push us-central1-docker.pkg.dev/rosie-fire/rosie-images/rosie-api
+
+# Deploy to Cloud Run
+gcloud run deploy rosie-api \
+  --image us-central1-docker.pkg.dev/rosie-fire/rosie-images/rosie-api \
+  --project=rosie-fire \
+  --region=us-central1 \
+  --allow-unauthenticated
+
+# Deploy Firebase Hosting (proxy to Cloud Run)
+firebase deploy --only hosting --project rosie-fire
+```
+
+The service is live at `https://rosie-api-rqcuxs7u6a-uc.a.run.app/health` and proxied through `https://rosie-fire.web.app/health`.
 
 ## Current category status
 
@@ -92,7 +117,7 @@ Update this document and the README with the actual implemented Google stack, th
 
 - Gemini version/path is compliant;
 - a permitted Google Agent Framework is genuinely in the execution path;
-- at least one Google Cloud infrastructure service is genuinely used;
+- at least one Google Cloud infrastructure service is genuinely used (Cloud Run ✅, Firebase Hosting ✅, Artifact Registry ✅);
 - cloud deployment can be demonstrated live;
 - architecture diagram matches reality;
 - local/cloud spin-up instructions are reproducible;

@@ -1,12 +1,7 @@
-# Python
+# Python bytecode
 __pycache__/
 *.py[cod]
 *$py.class
-*.pyc
-*.pyo
-*.pyd
-Pyproject.pyc
-*.so
 
 # Distribution / packaging
 dist/
@@ -18,7 +13,6 @@ build/
 .venv/
 venv/
 env/
-ENV/
 
 # Testing
 .pytest_cache/
@@ -28,7 +22,6 @@ htmlcov/
 .tox/
 .mypy_cache/
 .ruff_cache/
-.pytest_cache/
 
 # IDEs
 .vscode/
@@ -65,3 +58,13 @@ logs/
 
 # Firebase CLI cache
 .firebase/
+
+# Docker
+.dockerignore
+Dockerfile
+
+# Non-runtime files
+tests/
+docs/
+.git/
+.github/

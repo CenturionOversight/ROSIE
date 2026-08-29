@@ -161,3 +161,58 @@ The principal integration points are:
 - `ApprovalPolicy` — human authorization boundary.
 
 These seams allow an external agent framework to be added without automatically requiring replacement of the underlying local tools or approval implementation.
+
+## HTTP boundary
+
+`server.py` provides a narrow, portable HTTP entry point around ROSIE. It uses only the Python standard library (`http.server`) and does not depend on any Google-specific runtime APIs.
+
+The server binds to the `PORT` environment variable (default 8080), which is how Cloud Run and other container runtimes supply the listening port.
+
+### Architecture layers
+
+```text
+public/                     frontend assets (static files)
+  ↓
+Firebase Hosting            static frontend host / proxy
+  ↓ (/health, future routes)
+Cloud Run                   container host
+  ↓
+server.py                   HTTP boundary (stdlib http.server)
+  ↓
+wrapper/                    ROSIE core agent loop and tools
+  ↓
+LiteLLM                     model-provider abstraction
+```
+
+### Google-specific boundary
+
+Google is the temporary deployment target, not the architecture. The following components are Google-specific and removable:
+
+- **Firebase Hosting** — temporary frontend host; can be replaced with any static web host.
+- **Cloud Run** — temporary container host; the same container runs on any container platform.
+- **Artifact Registry** — temporary container image registry.
+
+ROSIE's core (`wrapper/`) contains no Google-specific code. Google-specific agent/framework integration (Google ADK, Gemini via Vertex AI) will be added through a narrow adapter in the HTTP boundary layer (`server.py`), not fused into ROSIE's core.
+
+## Cloud Run deployment
+
+| Field | Value |
+|-------|-------|
+| Service name | `rosie-api` |
+| Region | `us-central1` |
+| Project | `rosie-fire` |
+| Image | `us-central1-docker.pkg.dev/rosie-fire/rosie-images/rosie-api` |
+| URL | `https://rosie-api-rqcuxs7u6a-uc.a.run.app` |
+| Health endpoint | `GET /health` |
+| Container port | 8080 |
+
+### Container
+
+- Base image: `python:3.14-slim`
+- No embedded credentials
+- No local `.env` or `.venv` copied into the image
+- Runs as non-root user `rosie`
+
+### Routing
+
+Firebase Hosting routes `/health` (and future backend routes) to Cloud Run via the `run` rewrite in `firebase.json`. All other paths serve static files from `public/`. There is no Firebase Functions dependency.

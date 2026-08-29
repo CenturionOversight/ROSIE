@@ -8,9 +8,11 @@
     ],
     "rewrites": [
       {
-        "source": "**",
-        "function": "app",
-        "region": "us-central1"
+        "source": "/health",
+        "run": {
+          "serviceId": "rosie-api",
+          "region": "us-central1"
+        }
       }
     ]
   }
