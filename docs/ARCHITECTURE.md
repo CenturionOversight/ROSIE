@@ -234,3 +234,56 @@ Browser → frontend → ROSIE interaction endpoint → Cloud Run → ROSIE exec
 ```
 
 The frontend currently reserves a disabled input/conversation area. The ROSIE interaction endpoint, request/response schema, and browser-based execution are not yet defined.
+
+## HACKASS Google ADK integration
+
+The `hackass/` package contains hackathon-created code that integrates Google ADK and Gemini 3.5+ into the ROSIE execution path.
+
+### Architecture layers
+
+```text
+Google ADK (LlmAgent)           hackathon-created execution framework
+  ↓
+Gemini 3.5+ (Vertex AI)         hackathon-created model provider
+  ↓
+hackass/bridge.py               hackathon-created adapter (thin wrappers)
+  ↓
+wrapper/tools.py                ARCHESTRATOR (pre-existing, disclosed)
+  ↓
+LiteLLM provider/fallback       ARCHESTRATOR model abstraction
+```
+
+### Provenance boundary
+
+| Component | Origin | File |
+|-----------|--------|------|
+| `wrapper/cli.py` | Pre-existing (ARCHESTRATOR) | disclosed |
+| `wrapper/tools.py` | Pre-existing (ARCHESTRATOR) | disclosed |
+| `wrapper/policy.py` | Pre-existing (ARCHESTRATOR) | disclosed |
+| `hackass/config.py` | Hackathon-created (HACKASS) | Gemini 3.5+ configuration |
+| `hackass/bridge.py` | Hackathon-created (HACKASS) | ADK ↔ ARCHESTRATOR adapter |
+| `hackass/agent.py` | Hackathon-created (HACKASS) | ADK agent factory + runner |
+| `hackass/run.py` | Hackathon-created (HACKASS) | CLI entry point |
+
+The adapter functions in `hackass/bridge.py` delegate to the existing `wrapper.tools.dispatch_tool()` — they do not duplicate file, shell, or Git logic. The ARCHESTRATOR tool layer, approval policy, and workspace-security semantics remain unchanged and are honored by the bridge.
+
+### Model configuration
+
+| Field | Value |
+|-------|-------|
+| Model | `gemini-3.5-flash` |
+| Provider | Vertex AI API (`aiplatform.googleapis.com`) |
+| Project | `rosie-fire` |
+| Region | `asia-northeast1` (gemini-3.5-flash not available in us-central1) |
+| Auth | Application Default Credentials (ADC) |
+
+### Verified execution
+
+Real execution has been verified end-to-end:
+
+1. ADK `LlmAgent` created with `gemini-3.5-flash` model;
+2. Agent requested `inspect_file(relative_path="README.md")`;
+3. Bridge adapter called `wrapper.tools.dispatch_tool("inspect_file", ...)`;
+4. ARCHESTRATOR read the file and returned content;
+5. Gemini produced final response: "ROSIE is a Python-based agentic command-line interface...";
+6. Cloud Run service remains unchanged and healthy.
