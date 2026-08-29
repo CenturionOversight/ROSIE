@@ -215,7 +215,7 @@ ROSIE's core (`wrapper/`) contains no Google-specific code. Google-specific agen
 
 ### Routing
 
-Firebase Hosting routes `/health` (and future backend routes) to Cloud Run via the `run` rewrite in `firebase.json`. All other paths serve static files from `public/`. There is no Firebase Functions dependency.
+Firebase Hosting routes `/health` and `/execute` to Cloud Run via the `run` rewrite in `firebase.json`. All other paths serve static files from `public/`. There is no Firebase Functions dependency.
 
 ## Frontend boundary
 

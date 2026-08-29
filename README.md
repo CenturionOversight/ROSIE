@@ -24,17 +24,17 @@ At any approval prompt, choosing `[a]lways` upgrades the current session to `yol
 
 ## Requirements
 
-- Python
+- Python 3.14+
 - `litellm>=1.0.0`
 - `pydantic>=2.0.0`
+- `google-adk>=1.0.0` (Google ADK for the HACKASS agent execution path)
+- Google Cloud SDK (`gcloud`) for Vertex AI / Cloud Run operations
 
 Install dependencies:
 
 ```bash
 python -m pip install -r requirements.txt
 ```
-
-The current development baseline was verified on Python 3.14.6. The repository does not yet declare a formal minimum or maximum Python version.
 
 ## Quick start
 
@@ -161,7 +161,15 @@ ROSIE/
 ├── firebase.json
 ├── server.py
 ├── public/
-│   └── index.html
+│   ├── index.html
+│   ├── app.js
+│   └── styles.css
+├── hackass/
+│   ├── __init__.py
+│   ├── config.py
+│   ├── bridge.py
+│   ├── agent.py
+│   └── run.py
 ├── wrapper/
 │   ├── __init__.py
 │   ├── cli.py
@@ -175,7 +183,9 @@ ROSIE/
 │   ├── test_path_traversal.py
 │   ├── test_policy.py
 │   ├── test_pydantic_models.py
-│   └── test_tools.py
+│   ├── test_tools.py
+│   ├── test_hackass_integration.py
+│   └── test_server_execute.py
 └── docs/
 ```
 
@@ -207,7 +217,7 @@ curl http://localhost:8080/health
 
 ### Firebase Hosting
 
-Firebase Hosting acts as a static-frontend proxy to Cloud Run. The `/health` route (and future backend routes) is rewritten to the Cloud Run service; all other paths serve static files from `public/`.
+Firebase Hosting acts as a static-frontend proxy to Cloud Run. The `/health` and `/execute` routes are rewritten to the Cloud Run service; all other paths serve static files from `public/`.
 
 Hosting URL: `https://rosie-fire.web.app`
 
@@ -238,9 +248,50 @@ The ROSIE application code does not depend on any Google-specific runtime APIs f
 - `server.py` — the HTTP boundary layer (portable stdlib `http.server`, no Google APIs)
 - `Dockerfile` — the container packaging
 
-The HACKASS Google ADK + Gemini 3.5+ integration lives in `hackass/`, which `server.py` calls through a narrow adapter. The same container can be deployed to any container platform.
+The HACKASS Google ADK + Gemini 3.5+ integration lives in `hackass/`, which `server.py` calls through a narrow adapter. The same container can be deployed to any container platform. See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the full architecture and boundary documentation.
 
-The same container can be deployed to any container platform. See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the full architecture and boundary documentation.
+## HACKASS: Google ADK + Gemini execution
+
+HACKASS is the hackathon-created integration that executes tasks through Google ADK and Gemini 3.5+.
+
+### Local execution
+
+```bash
+# Authenticate to Google Cloud (uses ADC for Vertex AI)
+gcloud auth application-default login --project=rosie-fire
+
+# Run a task directly through the HACKASS CLI
+python -m hackass.run /path/to/workspace "inspect the repository architecture"
+
+# Run the HTTP server and call it
+python -m server
+curl -X POST http://localhost:8080/execute \
+  -H "Content-Type: application/json" \
+  -d '{"prompt": "What is in the README?"}'
+```
+
+The execution chain is:
+
+Browser/CLI → `server.py` → `hackass.run_hackass()` → Google ADK → Gemini 3.5+ (Vertex AI) → ARCHESTRATOR tools → workspace → result.
+
+### Google Cloud services used
+
+| Service | Project | Purpose |
+|---------|---------|---------|
+| Cloud Run | `rosie-fire` / `us-central1` | Container host for `server.py` |
+| Firebase Hosting | `rosie-fire` | Static frontend + `/health` + `/execute` proxy |
+| Artifact Registry | `rosie-fire` | Container image registry |
+| Vertex AI | `rosie-fire` / `asia-northeast1` | Gemini 3.5+ model access |
+
+### Pre-existing code disclosure
+
+HACKASS incorporates pre-existing ARCHESTRATOR software (`wrapper/` package). This includes the agent loop, tool execution, approval policies, workspace controls, and LiteLLM abstraction. See [docs/HACKATHON.md](docs/HACKATHON.md) for the full provenance disclosure.
+
+### Provenance
+
+- **HACKASS** — hackathon-created integration (Google ADK, Gemini, web deployment).
+- **ARCHESTRATOR** — pre-existing incorporated software (`wrapper/`).
+- **ROSIE** — product identity outside the hackathon provenance distinction.
 
 ## Web interface
 
@@ -248,9 +299,10 @@ ROSIE has a minimal web interface deployed at `https://rosie-fire.web.app`.
 
 | Layer | Technology | Purpose |
 |-------|-----------|---------|
-| Static frontend | HTML/CSS/JS (no framework) | Landing page, backend status, reserved interaction area |
-| Firebase Hosting | Static host + proxy | Serves static files, proxies `/health` to Cloud Run |
+| Static frontend | HTML/CSS/JS (no framework) | Landing page, backend status, task input, conversation display |
+| Firebase Hosting | Static host + proxy | Serves static files, proxies `/health` and `/execute` to Cloud Run |
 | Cloud Run | `rosie-api` | Containerized Python HTTP server (`server.py`) |
-| ROSIE core | `wrapper/` | Agent loop, tools, approval policy |
+| HACKASS | `hackass/` | Google ADK + Gemini 3.5+ execution path |
+| ARCHESTRATOR | `wrapper/` | Agent loop, tools, approval policy |
 
-The web interface currently displays backend connectivity status via the `/health` endpoint. The input area is enabled for task submission via `POST /execute`, which invokes the HACKASS Google ADK + Gemini 3.5+ execution path. Browser-based execution is now live.
+The web interface displays backend connectivity via `GET /health` and allows users to submit tasks via `POST /execute`. Tasks are executed through the HACKASS Google ADK + Gemini 3.5+ path and results are displayed in the browser.

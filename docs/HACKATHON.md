@@ -2,11 +2,11 @@
 
 HACKASS is the project being built for Google's 2026 All Things Agentic Hackathon.
 
-ROSIE is the working/product identity used outside the hackathon-facing provenance distinction. For the hackathon submission, this document keeps HACKASS separate from the pre-existing ARCHESTRATOR software incorporated into it so the submission accurately discloses prior work.
+ROSIE is the product identity used outside the hackathon-facing provenance distinction. For the hackathon submission, this document keeps HACKASS separate from the pre-existing ARCHESTRATOR software incorporated into it so the submission accurately discloses prior work.
 
 ## Hackathon provenance
 
-The official rules require projects to be newly created during the Submission Period. Standard development tools, frameworks, libraries, starter templates, and AI coding assistants may be used, but other pre-existing code or work incorporated into the project must be disclosed.
+The official rules require projects to be newly created during the Submission Period (Aug 3, 2026 – Aug 31, 2026, 5:00pm PT). Standard development tools, frameworks, libraries, starter templates, and AI coding assistants may be used, but other pre-existing code or work incorporated into the Project must be disclosed.
 
 For this submission:
 
@@ -39,92 +39,72 @@ These capabilities are disclosed as pre-existing work incorporated into HACKASS.
 
 ## Hackathon-created HACKASS work
 
-The following work has been added during the hackathon project:
+The following work has been added during the hackathon:
 
-- `server.py` — portable Python HTTP boundary around the incorporated execution core;
-- `Dockerfile` and `.dockerignore` — portable container packaging;
-- Google Cloud Run deployment under project `rosie-fire` in `us-central1`, service `rosie-api`;
-- Firebase Hosting deployment at `https://rosie-fire.web.app`;
-- Firebase Hosting `/health` routing to the Cloud Run service;
-- static browser interface under `public/` using HTML, CSS, and JavaScript;
-- live backend-health integration from the browser through `/health`;
-- hackathon/cloud deployment documentation and configuration.
-
-The current browser interface reports backend connectivity. Browser-based agent execution has not yet been implemented.
-
-The current repository does **not** yet contain a Google Agent Framework integration. Existing Gemini support remains generic LiteLLM provider support rather than the hackathon-required Google Agent Framework integration.
+- Google ADK 2.8.0 integrated as the hackathon-specific execution framework (`hackass/agent.py`, `hackass/bridge.py`);
+- `gemini-3.5-flash` via Vertex AI on `rosie-fire`, `asia-northeast1` (`hackass/config.py`);
+- ADK ↔ ARCHESTRATOR tool bridge delegating to `wrapper.tools.dispatch_tool()` (`hackass/bridge.py`);
+- tests covering the Google integration (`tests/test_hackass_integration.py`) and HTTP boundary (`tests/test_server_execute.py`);
+- `server.py` — portable Python HTTP boundary with `POST /execute` endpoint;
+- Firebase Hosting `/execute` route forwarding to Cloud Run (`firebase.json`);
+- browser interface with enabled input and real result display (`public/`);
+- concurrency lock in `server.py` serializing `/execute` to protect shared ARCHESTRATOR state;
+- Cloud Run deployment (`rosie-api`, revision `rosie-api-00002-ncf`);
+- Firebase Hosting deployment at `https://rosie-fire.web.app`.
 
 ## Mandatory hackathon technology
 
 The official 2026 rules require every submission to use:
 
 1. Gemini 3.5 or newer through the Gemini API or Vertex AI — **implemented** (`gemini-3.5-flash` via Vertex AI on `rosie-fire`);
-2. at least one Google Agent Framework:
-   - Google ADK — **implemented** (2.8.0, see `hackass/agent.py` and `hackass/bridge.py`);
+2. at least one Google Agent Framework — **implemented** (Google ADK 2.8.0);
 3. at least one Google Cloud infrastructure service — **implemented** (Cloud Run, Firebase Hosting, Artifact Registry).
 
-The submission must also provide evidence in the demo that the backend is running on Google Cloud.
+## Live architecture
 
-Cloud Run already supplies a Google Cloud infrastructure service for HACKASS. The Google ADK + Gemini 3.5+ execution path is implemented and live.
+The deployed execution chain is:
+
+```text
+Browser
+  → Firebase Hosting
+  → Cloud Run (rosie-api)
+  → server.py (POST /execute)
+  → HACKASS run_hackass()
+  → Google ADK (LlmAgent)
+  → Gemini 3.5+ (Vertex AI)
+  → ARCHESTRATOR bridge
+  → inspect_file, run_shell, write_file, inspect_git_status, preview_write_file
+  → workspace (local filesystem)
+  → result returned to browser
+```
+
+## Verified execution evidence
+
+Real execution has been verified both locally and through the live deployed service:
+
+1. ADK `LlmAgent` created with `gemini-3.5-flash` model via Vertex AI;
+2. Agent requested `inspect_file(relative_path="README.md")`;
+3. Bridge adapter called `wrapper.tools.dispatch_tool("inspect_file", ...)`;
+4. ARCHESTRATOR read the file and returned content;
+5. Gemini produced a final response quoting README.md content;
+6. Result returned as `{"status": "ok", "result": "..."}` HTTP response via `POST /execute`.
 
 ## Submission artifacts
 
 The current rules call for:
 
-- one selected competition category;
-- a hosted project URL when available;
+- one selected competition category (Taskmaster, Collaborative Partner, or Fortified Enterprise Fleet);
+- a hosted project URL;
 - project description and technology summary;
 - a public or private source repository;
 - step-by-step spin-up instructions in the root README;
 - an architecture diagram;
-- a public demo video up to approximately four minutes;
+- a public demo video up to four minutes;
 - visible proof in the demo that the backend is running on Google Cloud.
 
-For a private repository, the rules currently require repository access for the hackathon judging accounts specified by Devpost.
+For a private repository, the rules require repository access for the hackathon judging accounts: `testing@devpost.com` and `cloudhackathons@google.com`.
 
-## Existing code disclosure
-
-The hackathon FAQ states that submitted projects must be newly created during the submission period, while pre-existing code incorporated into the project must be disclosed.
-
-### Pre-existing ROSIE core (ARCHESTRATOR)
-
-The incorporated pre-existing ARCHESTRATOR foundation provides:
-
-- `wrapper/cli.py`;
-- `wrapper/tools.py`;
-- `wrapper/policy.py`;
-- the existing iterative local agent loop;
-- real tool execution;
-- multi-step task completion;
-- local file inspection and modification;
-- shell execution;
-- Git status inspection;
-- configurable human approval modes;
-- model-provider abstraction through LiteLLM;
-- existing LiteLLM provider/fallback behavior;
-- generic Gemini access through LiteLLM when configured;
-- existing tests covering that core.
-
-These capabilities are disclosed as pre-existing work incorporated into HACKASS. They are not represented as hackathon-created functionality.
-
-### Hackathon-specific work (HACKASS)
-
-The following work has been added during the hackathon project:
-
-- Google ADK 2.8.0 integrated as the hackathon-specific execution framework (`hackass/agent.py`, `hackass/bridge.py`);
-- `gemini-3.5-flash` via Vertex AI on `rosie-fire`, `asia-northeast1` (`hackass/config.py`);
-- ADK ↔ ARCHESTRATOR tool bridge delegating to `wrapper.tools.dispatch_tool()` (`hackass/bridge.py`);
-- tests specifically covering that integration (`tests/test_hackass_integration.py`);
-- documentation describing that integration;
-- `server.py` — portable Python HTTP boundary around the incorporated execution core;
-- `Dockerfile` and `.dockerignore` — portable container packaging;
-- Google Cloud Run deployment under project `rosie-fire` in `us-central1`, service `rosie-api`;
-- Firebase Hosting deployment at `https://rosie-fire.web.app`;
-- Firebase Hosting `/health` routing to the Cloud Run service;
-- static browser interface under `public/` using HTML, CSS, and JavaScript;
-- live backend-health integration from the browser through `/health`.
-
-### Currently implemented
+## Currently implemented
 
 - Google ADK 2.8.0 integrated as the hackathon-specific execution framework;
 - Gemini 3.5+ (`gemini-3.5-flash`) configured via Vertex AI on `rosie-fire`;
@@ -133,63 +113,42 @@ The following work has been added during the hackathon project:
 - Firebase Hosting `/execute` route forwarding to Cloud Run;
 - Browser interface with enabled input and real result display;
 - Concurrency lock serializes `/execute` to protect shared ARCHESTRATOR state;
-- Real agent execution verified: Gemini 3.5+ invoked ADK, requested `inspect_file`, bridge delegated to `wrapper.tools.dispatch_tool`, ARCHESTRATOR read the file, result returned through the Google execution path to the HTTP caller;
+- Real agent execution verified locally and live through `https://rosie-fire.web.app`;
 - Cloud Run and Firebase Hosting live and healthy;
 - 21 focused HACKASS tests + 16 focused server tests pass; full regression suite passes (154 passed, 1 skipped).
 
-### Currently not implemented
+## Currently not implemented
 
 - Authentication on the `/execute` endpoint (currently anonymous — acceptable for hackathon demo scope);
 - Persistent conversation history across requests (each request is a fresh ADK session);
-- Per-user workspaces.
+- Per-user workspaces;
+- Demo video (pending recording);
+- Devpost submission entry.
 
-## Architecture diagram
+## Track selection
 
-The incorporated execution architecture and current hackathon deployment architecture are documented in [ARCHITECTURE.md](ARCHITECTURE.md), including Mermaid diagrams.
+No final competition category is selected yet. The three official tracks are:
 
-The diagram must be updated when the Google-specific execution path is implemented so that the final submission clearly shows how Gemini, the selected Google Agent Framework, HACKASS, the incorporated ARCHESTRATOR execution foundation, and Google Cloud infrastructure connect.
+- **Taskmaster** — multi-step background workflow agent;
+- **Collaborative Partner** — clarifying questions and guided interaction;
+- **Fortified Enterprise Fleet** — scalable institutional agent network.
 
-## Spin-up instructions
+HACKASS primarily demonstrates Taskmaster characteristics (autonomous multi-step task execution with real tool use and file/shell actions). Track selection is pending Darren's decision.
 
-The root [README.md](../README.md) contains the current local setup and execution instructions.
+## Submission checklist
 
-Cloud deployment instructions have been added:
+Before the deadline (Aug 31, 2026, 5:00pm PT):
 
-```bash
-# Build and push
-docker build -t us-central1-docker.pkg.dev/rosie-fire/rosie-images/rosie-api .
-docker push us-central1-docker.pkg.dev/rosie-fire/rosie-images/rosie-api
-
-# Deploy to Cloud Run
-gcloud run deploy rosie-api \
-  --image us-central1-docker.pkg.dev/rosie-fire/rosie-images/rosie-api \
-  --project=rosie-fire \
-  --region=us-central1 \
-  --allow-unauthenticated
-
-# Deploy Firebase Hosting
-firebase deploy --only hosting --project rosie-fire
-```
-
-The service is live at `https://rosie-api-rqcuxs7u6a-uc.a.run.app/health` and proxied through `https://rosie-fire.web.app/health`.
-
-## Current category status
-
-No final competition category is documented here yet. Category selection should reflect the implemented HACKASS system rather than being inferred from the incorporated ARCHESTRATOR foundation.
-
-## Before submission
-
-Update this document and the README with the actual implemented Google stack, then verify at minimum:
-
-- HACKASS is clearly identified as the newly created hackathon project;
-- ARCHESTRATOR is clearly disclosed as pre-existing incorporated software;
-- hackathon-created work is distinguished from the incorporated ARCHESTRATOR foundation;
-- Gemini version/path is compliant;
-- a permitted Google Agent Framework is genuinely in the execution path;
-- at least one Google Cloud infrastructure service is genuinely used (Cloud Run is already deployed);
-- cloud deployment can be demonstrated live;
-- architecture diagram matches reality;
-- local/cloud spin-up instructions are reproducible;
-- private-repository judge access is configured if the repository remains private;
-- demo video stays within the competition time limit;
-- repository and submission state are handled according to the judging-period rules.
+- [ ] HACKASS is clearly identified as the newly created hackathon project;
+- [ ] ARCHESTRATOR is clearly disclosed as pre-existing incorporated software;
+- [ ] hackathon-created work is distinguished from the incorporated ARCHESTRATOR foundation;
+- [ ] Gemini version/path is compliant (`gemini-3.5-flash` via Vertex AI);
+- [ ] Google ADK is genuinely in the execution path (2.8.0);
+- [ ] At least one Google Cloud infrastructure service is genuinely used (Cloud Run, Firebase Hosting);
+- [ ] Architecture diagram matches reality;
+- [ ] Local/cloud spin-up instructions are reproducible;
+- [ ] Repository judge access is configured (public or private with `testing@devpost.com` + `cloudhackathons@google.com`);
+- [ ] Cloud Run deployment is live and verifiable;
+- [ ] Demo video (max 4 min) shows live execution + Google Cloud proof;
+- [ ] Devpost submission entry is created with all required fields;
+- [ ] Post-deadline freeze rule is respected (no edits after submission period ends).
