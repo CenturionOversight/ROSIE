@@ -85,6 +85,31 @@ body {
   font-size: 0.875rem;
 }
 
+.message {
+  margin-bottom: 0.75rem;
+}
+
+.message-label {
+  color: #58a6ff;
+  font-weight: 600;
+  font-size: 0.8rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.message-text {
+  display: block;
+  margin-top: 0.25rem;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.message-error {
+  color: #f85178;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
 .input-form {
   display: flex;
   flex-direction: column;

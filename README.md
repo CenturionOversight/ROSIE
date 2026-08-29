@@ -129,8 +129,8 @@ python -m pytest tests/ -v
 Current verified baseline:
 
 ```text
-118 discovered
-117 passed
+155 discovered
+154 passed
 0 failed
 1 skipped
 ```
@@ -234,8 +234,11 @@ firebase deploy --only hosting --project rosie-fire
 ### Portability
 
 The ROSIE application code does not depend on any Google-specific runtime APIs for normal operation. Google-specific integration is isolated to:
-- `server.py` — the HTTP boundary layer
+
+- `server.py` — the HTTP boundary layer (portable stdlib `http.server`, no Google APIs)
 - `Dockerfile` — the container packaging
+
+The HACKASS Google ADK + Gemini 3.5+ integration lives in `hackass/`, which `server.py` calls through a narrow adapter. The same container can be deployed to any container platform.
 
 The same container can be deployed to any container platform. See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the full architecture and boundary documentation.
 
@@ -250,4 +253,4 @@ ROSIE has a minimal web interface deployed at `https://rosie-fire.web.app`.
 | Cloud Run | `rosie-api` | Containerized Python HTTP server (`server.py`) |
 | ROSIE core | `wrapper/` | Agent loop, tools, approval policy |
 
-The web interface currently displays backend connectivity status via the `/health` endpoint. The ROSIE interaction/input area is visually reserved but functionally disabled — browser-based execution is not yet implemented. See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the current vs future architecture boundary.
+The web interface currently displays backend connectivity status via the `/health` endpoint. The input area is enabled for task submission via `POST /execute`, which invokes the HACKASS Google ADK + Gemini 3.5+ execution path. Browser-based execution is now live.

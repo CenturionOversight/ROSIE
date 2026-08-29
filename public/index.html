@@ -20,23 +20,21 @@
     <section class="panel">
       <h2>Conversation</h2>
       <div id="conversation" class="conversation-area">
-        <p class="placeholder">No conversation history yet.</p>
+        <p class="placeholder">Submit a task to see it appear here.</p>
       </div>
     </section>
 
     <section class="panel">
-      <h2>Input</h2>
+      <h2>Task</h2>
       <form id="input-form" class="input-form" autocomplete="off">
         <textarea
           id="prompt-input"
           name="prompt"
-          placeholder="ROSIE interaction endpoint is not yet available."
-          disabled
+          placeholder="Enter a task for ROSIE..."
           rows="3"
         ></textarea>
-        <button type="submit" disabled>Send</button>
+        <button type="submit">Send</button>
       </form>
-      <p class="hint">The backend /health endpoint is reachable, but ROSIE execution from the browser is not yet implemented.</p>
     </section>
   </main>
 

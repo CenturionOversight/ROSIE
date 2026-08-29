@@ -129,15 +129,19 @@ The following work has been added during the hackathon project:
 - Google ADK 2.8.0 integrated as the hackathon-specific execution framework;
 - Gemini 3.5+ (`gemini-3.5-flash`) configured via Vertex AI on `rosie-fire`;
 - Five ARCHESTRATOR tools bridged to ADK without duplicating their logic;
-- Real agent execution verified: Gemini 3.5+ invoked ADK, requested `inspect_file`, bridge delegated to `wrapper.tools.dispatch_tool`, ARCHESTRATOR read the file, result returned through the Google execution path;
+- `POST /execute` HTTP endpoint in `server.py` calling `run_hackass()`;
+- Firebase Hosting `/execute` route forwarding to Cloud Run;
+- Browser interface with enabled input and real result display;
+- Concurrency lock serializes `/execute` to protect shared ARCHESTRATOR state;
+- Real agent execution verified: Gemini 3.5+ invoked ADK, requested `inspect_file`, bridge delegated to `wrapper.tools.dispatch_tool`, ARCHESTRATOR read the file, result returned through the Google execution path to the HTTP caller;
 - Cloud Run and Firebase Hosting live and healthy;
-- 21 focused tests pass; full regression suite passes (138 passed, 1 skipped).
+- 21 focused HACKASS tests + 16 focused server tests pass; full regression suite passes (154 passed, 1 skipped).
 
 ### Currently not implemented
 
-- Browser-based agent execution (interactive chat endpoint);
-- ROSIE web interaction endpoint (no browser→agent backend API);
-- Final hackathon API contract, authentication, persistence, or user model.
+- Authentication on the `/execute` endpoint (currently anonymous — acceptable for hackathon demo scope);
+- Persistent conversation history across requests (each request is a fresh ADK session);
+- Per-user workspaces.
 
 ## Architecture diagram
 

@@ -174,11 +174,11 @@ The server binds to the `PORT` environment variable (default 8080), which is how
 public/                     frontend assets (static files)
   ↓
 Firebase Hosting            static frontend host / proxy
-  ↓ (/health, future routes)
+  ↓ (/health, /execute)
 Cloud Run                   container host
   ↓
 server.py                   HTTP boundary (stdlib http.server)
-  ↓
+  ↓ (/health or /execute)
 wrapper/                    ROSIE core agent loop and tools
   ↓
 LiteLLM                     model-provider abstraction
@@ -192,7 +192,7 @@ Google is the temporary deployment target, not the architecture. The following c
 - **Cloud Run** — temporary container host; the same container runs on any container platform.
 - **Artifact Registry** — temporary container image registry.
 
-ROSIE's core (`wrapper/`) contains no Google-specific code. Google-specific agent/framework integration (Google ADK, Gemini via Vertex AI) will be added through a narrow adapter in the HTTP boundary layer (`server.py`), not fused into ROSIE's core.
+ROSIE's core (`wrapper/`) contains no Google-specific code. Google-specific agent/framework integration (Google ADK, Gemini via Vertex AI) is added through a narrow adapter in the `hackass/` package, which `server.py` calls — Google-specific code is not fused into ROSIE's core.
 
 ## Cloud Run deployment
 
@@ -221,19 +221,50 @@ Firebase Hosting routes `/health` (and future backend routes) to Cloud Run via t
 
 `public/` contains the static web interface served directly by Firebase Hosting. The application shell is plain HTML/CSS/JavaScript (no framework).
 
-### Current vs future boundary
+### Current boundary
 
-**Current:**
 ```
-Browser → Firebase Hosting (static) → /health → Cloud Run
-```
-
-**Future (not yet implemented):**
-```
-Browser → frontend → ROSIE interaction endpoint → Cloud Run → ROSIE execution
+Browser → Firebase Hosting → /health + POST /execute → Cloud Run → server.py → HACKASS → Google ADK → Gemini 3.5+ → ARCHESTRATOR → tools/actions → HACKASS → Browser
 ```
 
-The frontend currently reserves a disabled input/conversation area. The ROSIE interaction endpoint, request/response schema, and browser-based execution are not yet defined.
+The browser interface includes an enabled input area that submits tasks via `POST /execute`. Backend health polling via `GET /health` remains independent of execution.
+
+### HACKASS browser execution path
+
+The `hackass/` package and `server.py` together provide a browser-accessible execution path:
+
+```text
+Browser                              user submits a task
+  ↓
+Firebase Hosting                     static host + proxy
+  ↓ (POST /execute rewrite)
+Cloud Run (rosie-api)                container host
+  ↓
+server.py                            HTTP boundary (stdlib http.server)
+  ↓                                  POST /execute handler
+  ↓                                  validates request body
+  ↓                                  acquires _EXECUTION_LOCK
+  ↓
+hackass.agent.run_hackass()          hackathon-created runner
+  ↓
+Google ADK (LlmAgent)                hackathon-created execution framework
+  ↓
+Gemini 3.5+ (Vertex AI)              hackathon-created model provider
+  ↓
+hackass.bridge.py                    hackathon-created adapter (thin wrappers)
+  ↓
+wrapper.tools.dispatch_tool()        ARCHESTRATOR (pre-existing, disclosed)
+  ↓
+ARCHESTRATOR tools                   file/shell/Git execution
+  ↓
+workspace                            local filesystem
+```
+
+Workspace and approval policy are configured server-side. The browser supplies only the prompt.
+
+### Concurrency strategy
+
+ARCHESTRATOR manages workspace root and approval policy through module-level globals in `wrapper/tools.py`. Concurrent `/execute` requests would race on that shared state. A `threading.Lock` (`_EXECUTION_LOCK`) in `server.py` serializes `/execute` requests — the smallest appropriate server-side mechanism that prevents concurrent state mutation without redesigning ARCHESTRATOR's state model.
 
 ## HACKASS Google ADK integration
 
@@ -279,11 +310,21 @@ The adapter functions in `hackass/bridge.py` delegate to the existing `wrapper.t
 
 ### Verified execution
 
-Real execution has been verified end-to-end:
+Real execution has been verified both locally and end-to-end through the HTTP boundary:
 
+**Local CLI execution:**
 1. ADK `LlmAgent` created with `gemini-3.5-flash` model;
 2. Agent requested `inspect_file(relative_path="README.md")`;
 3. Bridge adapter called `wrapper.tools.dispatch_tool("inspect_file", ...)`;
 4. ARCHESTRATOR read the file and returned content;
 5. Gemini produced final response: "ROSIE is a Python-based agentic command-line interface...";
-6. Cloud Run service remains unchanged and healthy.
+
+**HTTP/browser execution:**
+1. `POST /execute` with `{"prompt": "Inspect the README.md file and tell me what ROSIE is."}`;
+2. `server.py` handler validated the request and called `run_hackass()`;
+3. ADK invoked Gemini 3.5+;
+4. Agent requested `inspect_file(relative_path="README.md")`;
+5. ARCHESTRATOR `dispatch_tool` read the file;
+6. Gemini produced final response quoting README.md content;
+7. Result returned as `{"status": "ok", "result": "..."}` HTTP response;
+8. Cloud Run service remained healthy throughout.
