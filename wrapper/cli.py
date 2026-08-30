@@ -6,10 +6,10 @@ the only thing that changes is the ``--model`` flag.
 
 Usage::
 
-    python -m wrapper.cli                                  # defaults: . workspace, gemini-2.5-pro
+    python -m wrapper.cli                                  # defaults: . workspace, vertex_ai/gemini-3.7-flash
     python -m wrapper.cli /path/to/repo                    # explicit workspace
     python -m wrapper.cli /path/to/repo "build the project"  # one-shot prompt
-    python -m wrapper.cli --model gemini/gemini-2.5-pro --yolo
+    python -m wrapper.cli --model ollama/qwen2.5-coder:7b --yolo  # explicit model
 
 Approval policies can be set at startup with ``-y/--yolo`` or
 ``--auto-write``, or toggled live during the session by selecting
@@ -46,6 +46,8 @@ __all__ = ["main"]
 # ---------------------------------------------------------------------------
 # When the primary model fails (auth error, insufficient credits, rate limit),
 # try each model in this list in order until one succeeds.
+# Vertex models do NOT fall back to OpenRouter or Ollama — failures are surfaced
+# directly. These fallbacks only apply when a non-Vertex model is explicitly selected.
 FALLBACK_MODELS: list[str] = [
     "openrouter/deepseek/deepseek-chat",
     "ollama/qwen2.5-coder:7b",
@@ -79,8 +81,8 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "-m", "--model",
-        default="ollama/qwen2.5-coder:7b",
-        help="LLM model to use (default: ollama/qwen2.5-coder:7b).",
+        default="vertex_ai/gemini-3.7-flash",
+        help="LLM model to use (default: vertex_ai/gemini-3.7-flash).",
     )
     parser.add_argument(
         "--temperature",
@@ -288,8 +290,9 @@ def main(argv: list[str] | None = None) -> int:
         "OPENROUTER_API_KEY",
     )
     
-    # Build the model chain (primary + fallbacks unless --no-fallback).
-    if args.no_fallback:
+    # Build the model chain (primary + fallbacks unless --no-fallback or Vertex).
+    # Vertex models do not silently fall back to OpenRouter/Ollama — surface failures directly.
+    if args.no_fallback or _is_vertex_model(args.model):
         model_chain: list[str] = [args.model]
     else:
         model_chain = [args.model] + [
@@ -298,15 +301,24 @@ def main(argv: list[str] | None = None) -> int:
     
     has_key = any(os.environ.get(k) for k in api_key_vars)
     chain_has_ollama = any(_is_ollama_model(m) for m in model_chain)
-    if not has_key and not chain_has_ollama:
+    chain_has_vertex = any(_is_vertex_model(m) for m in model_chain)
+    if not has_key and not chain_has_ollama and not chain_has_vertex:
         print(
             "Error: No API key found in environment variables.\n"
             "  Set one of: GEMINI_API_KEY, ANTHROPIC_API_KEY, OPENAI_API_KEY, "
             "DEEPSEEK_API_KEY, OPENROUTER_API_KEY\n"
-            "  (Ollama models like 'ollama/...' do not require an API key.)",
+            "  (Ollama models like 'ollama/...' do not require an API key.)\n"
+            "  (Vertex AI models like 'vertex_ai/...' use Application Default Credentials.)",
             file=sys.stderr,
         )
         return 1
+
+    # --- Set Vertex AI defaults for local ROSIE ---
+    # These establish the local demo project without modifying HACKASS config
+    # or requiring manual env var setup each session.
+    if chain_has_vertex:
+        os.environ.setdefault("VERTEXAI_PROJECT", "rosie-fire")
+        os.environ.setdefault("VERTEXAI_LOCATION", "global")
 
     # --- Approval policy ---
     policy = ApprovalPolicy()
@@ -378,6 +390,11 @@ def _run_turn(
 def _is_ollama_model(model: str) -> bool:
     """Return True if the model string targets a local Ollama endpoint."""
     return model.startswith("ollama/") or model.startswith("ollama;")
+
+
+def _is_vertex_model(model: str) -> bool:
+    """Check if a model string targets Google Vertex AI via LiteLLM."""
+    return model.startswith("vertex_ai/")
 
 
 def _configure_peep_executor(root: Path) -> None:

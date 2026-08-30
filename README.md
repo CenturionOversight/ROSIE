@@ -79,29 +79,22 @@ python -m wrapper.cli . --no-fallback "quick task"
 ROSIE uses LiteLLM. The default model is:
 
 ```text
-ollama/qwen2.5-coder:7b
+vertex_ai/gemini-3.7-flash
 ```
 
-The current fallback chain is:
+Vertex AI uses Google Application Default Credentials (ADC). Ensure you have
+authenticated with:
 
-```text
-openrouter/deepseek/deepseek-chat
-ollama/qwen2.5-coder:7b
+```bash
+gcloud auth application-default login --project=rosie-fire
 ```
 
-Provider API keys are read from environment variables by LiteLLM. ROSIE recognizes the presence of:
+ROSIE automatically sets `VERTEXAI_PROJECT=rosie-fire` and
+`VERTEXAI_LOCATION=global` for local execution.
 
-```text
-GEMINI_API_KEY
-ANTHROPIC_API_KEY
-OPENAI_API_KEY
-DEEPSEEK_API_KEY
-GROK_API_KEY
-XAI_API_KEY
-OPENROUTER_API_KEY
-```
-
-Do not commit credentials or `.env` files. See [docs/SECURITY.md](docs/SECURITY.md).
+The default Vertex model does **not** fall back to OpenRouter or Ollama — if
+Vertex fails, the error is surfaced directly. Use `--no-fallback` to disable
+fallbacks for any model, or `--model` to explicitly select an alternative.
 
 ## Agent loop
 
@@ -129,8 +122,8 @@ python -m pytest tests/ -v
 Current verified baseline:
 
 ```text
-155 discovered
-154 passed
+210 discovered
+209 passed
 0 failed
 1 skipped
 ```

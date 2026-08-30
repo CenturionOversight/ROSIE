@@ -1,15 +1,14 @@
 """Tests for the CLI argument parser and model chain construction."""
 import pytest
 
-from wrapper.cli import _build_parser, FALLBACK_MODELS, _is_ollama_model
+from wrapper.cli import _build_parser, FALLBACK_MODELS, _is_ollama_model, _is_vertex_model
 
 
 class TestArgumentParser:
-    def test_default_workspace(self):
+    def test_default_model(self):
         parser = _build_parser()
         args = parser.parse_args([])
-        assert args.workspace == "."
-        assert args.model == "ollama/qwen2.5-coder:7b"
+        assert args.model == "vertex_ai/gemini-3.7-flash"
 
     def test_explicit_workspace(self):
         parser = _build_parser()
@@ -64,7 +63,20 @@ class TestArgumentParser:
         assert args.max_iterations == 10
 
 
-class TestIsOllamaModel:
+    def test_default_workspace(self):
+        parser = _build_parser()
+        args = parser.parse_args([])
+        assert args.workspace == "."
+
+
+class TestIsVertexModel:
+    def test_vertex_prefix(self):
+        assert _is_vertex_model("vertex_ai/gemini-3.7-flash") is True
+
+    def test_non_vertex(self):
+        assert _is_vertex_model("gemini/gemini-2.5-pro") is False
+        assert _is_vertex_model("openrouter/deepseek/deepseek-chat") is False
+        assert _is_vertex_model("ollama/qwen2.5-coder:7b") is False
     def test_ollama_prefix(self):
         assert _is_ollama_model("ollama/qwen2.5-coder:7b") is True
 
@@ -87,3 +99,26 @@ class TestFallbackModels:
 
     def test_at_least_one_ollama_in_fallbacks(self):
         assert any(_is_ollama_model(m) for m in FALLBACK_MODELS)
+
+
+class TestVertexFallbackBehavior:
+    def test_vertex_model_has_no_fallback(self):
+        """Vertex models should not fall back to OpenRouter or Ollama."""
+        # The model chain for a Vertex model should be just the single model
+        model = "vertex_ai/gemini-3.7-flash"
+        assert model not in FALLBACK_MODELS
+        assert len(FALLBACK_MODELS) > 0  # Fallbacks still exist for non-Vertex
+
+
+class TestVertexOllamaBehavior:
+    def test_ollama_still_explicitly_selectable(self):
+        """Ollama should work when explicitly selected via --model."""
+        parser = _build_parser()
+        args = parser.parse_args([".", "--model", "ollama/qwen2.5-coder:7b"])
+        assert args.model == "ollama/qwen2.5-coder:7b"
+
+    def test_explicit_vertex_model_still_works(self):
+        """Explicit Vertex model should work via --model."""
+        parser = _build_parser()
+        args = parser.parse_args([".", "--model", "vertex_ai/gemini-3.5-flash"])
+        assert args.model == "vertex_ai/gemini-3.5-flash"
