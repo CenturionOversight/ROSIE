@@ -34,6 +34,7 @@ from wrapper.tools import (
     TOOL_SCHEMAS,
     get_workspace_root,
     set_policy,
+    set_shell_executor,
     set_workspace_root,
 )
 
@@ -274,6 +275,11 @@ def main(argv: list[str] | None = None) -> int:
     set_workspace_root(workspace_path)
     root = get_workspace_root()
 
+    # Configure PEEP-backed shell executor for local execution (if available).
+    # This does not affect HACKASS/Cloud Run, which imports wrapper.tools
+    # without this configuration and uses the default subprocess executor.
+    _configure_peep_executor(root)
+
     # --- API key check ---
     # LiteLLM reads API keys from environment variables automatically.
     api_key_vars = (
@@ -372,6 +378,24 @@ def _run_turn(
 def _is_ollama_model(model: str) -> bool:
     """Return True if the model string targets a local Ollama endpoint."""
     return model.startswith("ollama/") or model.startswith("ollama;")
+
+
+def _configure_peep_executor(root: Path) -> None:
+    """Configure PEEP-backed shell execution for local CLI use.
+
+    Lazily imports PEEP and the local adapter so that environments without
+    PEEP installed (including Cloud Run) continue to use the default
+    subprocess executor.
+    """
+    try:
+        from wrapper.peep_shell import PeepShellExecutor
+    except ImportError:
+        return
+
+    try:
+        set_shell_executor(PeepShellExecutor(cwd=str(root)))
+    except Exception:
+        pass
 
 
 if __name__ == "__main__":

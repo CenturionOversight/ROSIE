@@ -33,6 +33,7 @@ __all__ = [
     "set_workspace_root",
     "get_workspace_root",
     "set_policy",
+    "set_shell_executor",
     "inspect_file",
     "preview_write_file",
     "write_file",
@@ -51,6 +52,48 @@ __all__ = [
 
 _workspace_root: Optional[Path] = None
 _policy: Optional[ApprovalPolicy] = None
+_shell_executor: Any = None
+
+
+def set_shell_executor(executor: Any) -> None:
+    """Set a custom shell executor for :func:`run_shell`.
+
+    The executor must be a callable accepting (command: str, timeout: int)
+    and returning a formatted result string. If not set, the default
+    :mod:`subprocess`-based executor is used.
+    """
+    global _shell_executor
+    _shell_executor = executor
+
+
+def _default_shell_executor(command: str, timeout: int) -> str:
+    """Default shell executor using subprocess.run (unchanged from original)."""
+    root = get_workspace_root()
+    try:
+        proc = subprocess.run(
+            command,
+            shell=True,
+            cwd=str(root),
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+        )
+        result_parts = [f"$ {command}"]
+        stdout = proc.stdout.rstrip()
+        stderr = proc.stderr.rstrip()
+        result_parts.append(
+            f"STDOUT:\n{stdout}" if stdout else "STDOUT:\n(empty)"
+        )
+        result_parts.append(
+            f"STDERR:\n{stderr}" if stderr else "STDERR:\n(empty)"
+        )
+        result_parts.append(f"EXIT_CODE: {proc.returncode}")
+        return "\n".join(result_parts).strip()
+    except subprocess.TimeoutExpired:
+        return (
+            f"$ {command}\n"
+            f"ERROR: Command timed out after {timeout} seconds."
+        )
 
 
 def set_workspace_root(path: str | Path) -> None:
@@ -350,6 +393,10 @@ def run_shell(command: str, timeout: Optional[int] = 30) -> str:
     must confirm; in ``auto-write`` mode the user is still prompted;
     in ``yolo`` mode the command runs immediately.
 
+    After approval, the command is delegated to the configured shell
+    executor (see :func:`set_shell_executor`). If no executor is set,
+    the default :mod:`subprocess`-based executor is used.
+
     Args:
         command: The shell command to execute.
         timeout: Maximum execution time in seconds (default 30).
@@ -368,32 +415,15 @@ def run_shell(command: str, timeout: Optional[int] = 30) -> str:
         if not approved:
             return f"DENIED: Shell command '{command}' was rejected by user."
 
-    root = get_workspace_root()
+    executor = _shell_executor if _shell_executor is not None else _default_shell_executor
+    effective_timeout = timeout if timeout is not None else 30
 
     try:
-        proc = subprocess.run(
-            command,
-            shell=True,
-            cwd=str(root),
-            capture_output=True,
-            text=True,
-            timeout=timeout,
-        )
-        result_parts = [f"$ {command}"]
-        stdout = proc.stdout.rstrip()
-        stderr = proc.stderr.rstrip()
-        result_parts.append(
-            f"STDOUT:\n{stdout}" if stdout else "STDOUT:\n(empty)"
-        )
-        result_parts.append(
-            f"STDERR:\n{stderr}" if stderr else "STDERR:\n(empty)"
-        )
-        result_parts.append(f"EXIT_CODE: {proc.returncode}")
-        return "\n".join(result_parts).strip()
+        return executor(command, effective_timeout)
     except subprocess.TimeoutExpired:
         return (
             f"$ {command}\n"
-            f"ERROR: Command timed out after {timeout} seconds."
+            f"ERROR: Command timed out after {effective_timeout} seconds."
         )
 
 
