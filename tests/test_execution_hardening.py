@@ -238,10 +238,15 @@ class TestAsyncRatterSink:
 
 class TestTaskCorrelation:
     def test_rt_context_set_and_get(self):
-        from wrapper.rt_context import get_current_task_id, set_current_task_id
-        set_current_task_id("task_abc")
+        from wrapper.rt_context import (
+            get_current_task_id,
+            reset_current_task_id,
+            set_current_task_id,
+        )
+        assert get_current_task_id() is None
+        token = set_current_task_id("task_abc")
         assert get_current_task_id() == "task_abc"
-        set_current_task_id("")
+        reset_current_task_id(token)
         assert get_current_task_id() is None
 
     def test_task_id_flows_into_ratter_event(self):
@@ -268,12 +273,16 @@ class TestTaskCorrelation:
     def test_run_turn_assigns_task_id(self, monkeypatch, tmp_path):
         from wrapper import tools as tools_mod
         tools_mod._workspace_root = tmp_path.resolve()
-        captured = {}
+        seen = {}
 
         from unittest.mock import MagicMock as _MM
         from wrapper.cli import main
 
+        captured_tids = []
+
         def fake_completion(models, messages, temperature):
+            from wrapper.rt_context import get_current_task_id
+            captured_tids.append(get_current_task_id())
             resp = _MM()
             msg = _MM()
             msg.content = "ok"
@@ -287,6 +296,8 @@ class TestTaskCorrelation:
             main([str(tmp_path.resolve()), "say hi"])
 
         from wrapper.rt_context import get_current_task_id
-        tid = get_current_task_id()
-        assert tid is not None
-        assert tid.startswith("task_")
+        # During the turn, a task id was present and shared with the completion call.
+        assert captured_tids
+        assert all(t is not None and t.startswith("task_") for t in captured_tids)
+        # After the turn finished, the context is restored to its previous value.
+        assert get_current_task_id() is None

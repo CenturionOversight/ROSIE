@@ -42,6 +42,12 @@ from wrapper.tools import (
 
 __all__ = ["main"]
 
+# The local PEEP-backed shell executor created by ``_configure_peep_executor``
+# (or None when PEEP is unavailable / the subprocess fallback is in use).  It is
+# tracked here so ``_close_peep_executor`` can release it — and bound RATTER's
+# shutdown — on every CLI exit path.
+_peep_executor: Any = None
+
 
 # ---------------------------------------------------------------------------
 # Fallback model chain
@@ -300,6 +306,23 @@ def main(argv: list[str] | None = None) -> int:
     # without this configuration and uses the default subprocess executor.
     peep_status = _configure_peep_executor(root)
 
+    # Every exit path must release the configured local PEEP executor (bounding
+    # RATTER's shutdown).  The body below returns from inside the try; the
+    # finally is what guarantees the executor is closed on success, error,
+    # EOF/Ctrl+C, and exception paths alike.  When PEEP was unavailable the
+    # close helper is a harmless no-op.
+    try:
+        return _run_cli(args, root, peep_status)
+    finally:
+        _close_peep_executor()
+
+
+def _run_cli(args: argparse.Namespace, root: Path, peep_status: str) -> int:
+    """Run the main CLI execution phase under the PEEP lifecycle guard.
+
+    Separated from :func:`main` so the executor close in ``main``'s ``finally``
+    covers every return inside this function.
+    """
     # --- API key check ---
     # LiteLLM reads API keys from environment variables automatically.
     api_key_vars = (
@@ -413,21 +436,30 @@ def _run_turn(
     session, and RATTER telemetry event produced during the turn is correlated
     to that id.  The id is telemetry plumbing only — it is never exposed to the
     model as a tool argument.
+
+    The task context is scoped to this turn: a token is taken before any tool
+    runs and reset in a ``finally`` block, so the value is restored to its
+    previous state (normally ``None``) once the turn returns or raises.  Since
+    the turn body is wrapped in ``try/finally``, the reset happens on every
+    exit path and no task state leaks across turns.
     """
     from uuid import uuid4
 
-    from wrapper.rt_context import set_current_task_id
+    from wrapper.rt_context import reset_current_task_id, set_current_task_id
 
-    set_current_task_id(f"task_{uuid4().hex[:12]}")
-    messages.append({"role": "user", "content": prompt})
-    result = _resolve_tool_calls(
-        models=model_chain,
-        messages=messages,
-        temperature=args.temperature,
-        max_iterations=args.max_iterations,
-    )
-    print(result)
-    print()  # blank line for readability
+    token = set_current_task_id(f"task_{uuid4().hex[:12]}")
+    try:
+        messages.append({"role": "user", "content": prompt})
+        result = _resolve_tool_calls(
+            models=model_chain,
+            messages=messages,
+            temperature=args.temperature,
+            max_iterations=args.max_iterations,
+        )
+        print(result)
+        print()  # blank line for readability
+    finally:
+        reset_current_task_id(token)
 
 
 def _is_ollama_model(model: str) -> bool:
@@ -462,8 +494,10 @@ def _configure_peep_executor(root: Path) -> str:
         )
         return f"peep=unavailable fallback=subprocess reason={reason}"
 
+    global _peep_executor
     try:
         executor = PeepShellExecutor(cwd=str(root))
+        _peep_executor = executor
         set_shell_executor(executor)
         return "peep=attached"
     except Exception as exc:
@@ -473,6 +507,27 @@ def _configure_peep_executor(root: Path) -> str:
             file=sys.stderr,
         )
         return f"peep=unavailable fallback=subprocess reason={reason}"
+
+
+def _close_peep_executor() -> None:
+    """Release the configured local PEEP executor (bounded, never raising).
+
+    Delegates to the executor's own ``close()`` (which shut down its RATTER
+    sink with a bounded flush) on every exit path.  When no executor was
+    configured — PEEP unavailable or the subprocess fallback is in use — this
+    is a harmless no-op.  It is idempotent and never raises into the CLI.
+    """
+    global _peep_executor
+    executor = _peep_executor
+    _peep_executor = None
+    if executor is None:
+        return
+    try:
+        close = getattr(executor, "close", None)
+        if callable(close):
+            close()
+    except Exception:
+        pass
 
 
 if __name__ == "__main__":

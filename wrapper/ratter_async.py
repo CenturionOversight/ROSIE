@@ -10,11 +10,16 @@ trip adds latency to command execution.
 - a bounded in-memory queue accepts events from the calling thread;
 - a single daemon worker thread drains the queue and forwards batches to
   RATTER in the background;
-- enqueue is non-blocking: if the queue is full the oldest events are
-  dropped (with a log line) rather than blocking the caller;
+- enqueue is non-blocking: if the queue is full the events are dropped (with a
+  log line) rather than blocking the caller;
 - worker failures are caught and logged — never propagated to the caller;
-- :meth:`flush` / :meth:`close` drain a bounded number of pending events and
-  stop the worker.
+- :meth:`flush` waits (bounded) for the worker to actually drain the pending
+  events and returns a ``bool`` reporting whether it drained in time, leaving
+  the worker alive for future events;
+- :meth:`close` performs a bounded graceful shutdown — stop accepting new
+  telemetry, best-effort flush, then stop the worker — logging anything that
+  cannot be sent before returning without blocking indefinitely.  It is
+  idempotent and never raises.
 
 The sink is still best-effort telemetry.  Dropping events, a full queue, or
 an unreachable RATTER must never break command execution.
@@ -25,6 +30,7 @@ from __future__ import annotations
 import logging
 import queue
 import threading
+import time
 from typing import Any, Iterable
 
 from peep.events import PeepEvent
@@ -39,12 +45,22 @@ DEFAULT_QUEUE_SIZE = 5000
 DEFAULT_BATCH_SIZE = 50
 _WORKER_JOIN_TIMEOUT_SECONDS = 2.0
 
+# Sentinel pushed onto the queue to ask the worker to stop.  It is deliberately
+# *not* counted against outstanding pending telemetry.
+_SENTINEL: Any = None
+
 
 class AsyncRatterSink:
     """Background-draining wrapper around a synchronous :class:`RatterSink`.
 
     Provides the same :meth:`send_peep_events` surface used by the PEEP shell
     executor, but enqueues the work instead of performing the HTTP call inline.
+
+    Drain accounting: every accepted item increments an internal
+    ``outstanding`` counter which the worker decrements only after that item's
+    batches have all been sent.  :meth:`flush` and :meth:`close` watch this
+    counter (via a condition), so they truly wait for background sends to finish
+    rather than merely joining an eternally-alive worker thread.
     """
 
     def __init__(
@@ -61,8 +77,28 @@ class AsyncRatterSink:
         self._batch_size = batch_size
         self._closed = False
         self._worker: threading.Thread | None = None
+
+        self._lock = threading.Lock()
+        self._drain_cond = threading.Condition(self._lock)
+        self._outstanding = 0
+
         if auto_start:
             self.start()
+
+    # ------------------------------------------------------------------
+    # Internal drain accounting
+    # ------------------------------------------------------------------
+
+    def _note_accepted(self) -> None:
+        """Record one accepted (unprocessed) item under the drain condition."""
+        with self._drain_cond:
+            self._outstanding += 1
+
+    def _note_processed(self) -> None:
+        """Record one fully-processed item and wake any flusher."""
+        with self._drain_cond:
+            self._outstanding -= 1
+            self._drain_cond.notify_all()
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -81,7 +117,12 @@ class AsyncRatterSink:
         self._worker.start()
 
     def _run_worker(self) -> None:
-        """Drain the queue and forward batches until a sentinel is received."""
+        """Drain the queue and forward batches until a sentinel is received.
+
+        Every dequeued telemetry item is counted as accepted on the way in and
+        counted as processed once its batches have all been forwarded, so
+        :meth:`flush` can wait on a true drain rather than a thread join.
+        """
         while True:
             try:
                 item = self._queue.get(timeout=0.5)
@@ -94,14 +135,17 @@ class AsyncRatterSink:
                 # Sentinel: the worker has been asked to stop.
                 return
 
-            events, command_id, task_id = item
-            # Split oversized batches at the queue-item level.
-            for start in range(0, len(events), self._batch_size):
-                self._send_batch(
-                    events[start : start + self._batch_size],
-                    command_id,
-                    task_id,
-                )
+            try:
+                events, command_id, task_id = item
+                # Split oversized batches at the queue-item level.
+                for start in range(0, len(events), self._batch_size):
+                    self._send_batch(
+                        events[start : start + self._batch_size],
+                        command_id,
+                        task_id,
+                    )
+            finally:
+                self._note_processed()
 
     def _send_batch(
         self,
@@ -128,7 +172,8 @@ class AsyncRatterSink:
         """Enqueue PEEP events for background forwarding.
 
         Non-blocking.  Returns ``True`` if the events were accepted onto the
-        queue, ``False`` if the queue is full and the events were dropped.
+        queue, ``False`` if the sink is closed or the queue is full and the
+        events were dropped.
         """
         if self._closed:
             return False
@@ -144,32 +189,70 @@ class AsyncRatterSink:
                 "RATTER async queue full; dropping %d PEEP events", len(batch)
             )
             return False
+        self._note_accepted()
         return True
 
-    def flush(self, timeout: float = _WORKER_JOIN_TIMEOUT_SECONDS) -> int:
-        """Best-effort wait for the worker to drain pending events.
+    def flush(self, timeout: float = _WORKER_JOIN_TIMEOUT_SECONDS) -> bool:
+        """Wait (bounded) for the worker to drain all pending events.
 
-        Returns the number of events still left in the queue after *timeout*.
-        Does not block indefinitely; a non-zero return means some events were
-        not forwarded before the timeout.
+        Unlike a plain thread join, this actually waits for each accepted item
+        to be *processed* by the worker, then returns promptly once drained.
+        It never blocks indefinitely and leaves the worker alive for future
+        events.
+
+        Returns:
+            ``True`` if the queue drained within *timeout*, ``False`` if
+            pending events remained when the deadline elapsed.
         """
-        if self._worker is not None and self._worker.is_alive():
-            self._worker.join(timeout=timeout)
-        return self._queue.qsize()
+        deadline = time.monotonic() + timeout
+        with self._drain_cond:
+            while self._outstanding > 0:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    return False
+                self._drain_cond.wait(timeout=remaining)
+            return True
 
-    def close(self, timeout: float = _WORKER_JOIN_TIMEOUT_SECONDS) -> int:
-        """Stop the worker after draining a bounded amount of pending work.
+    def close(self, timeout: float = _WORKER_JOIN_TIMEOUT_SECONDS) -> bool:
+        """Stop the worker after a bounded, graceful shutdown.
 
-        Returns the number of events that remained on the queue (not
-        forwarded) when the worker stopped.  Never raises.
+        Sequence:
+        1. stop accepting new telemetry (subsequent ``send_peep_events`` → False);
+        2. best-effort flush of pending events within *timeout*;
+        3. signal the worker to exit with a sentinel;
+        4. join the worker for the remaining bounded time.
+
+        Never blocks indefinitely and never raises.  Idempotent: repeated
+        calls are safe and return the same drained status.
+
+        Returns:
+            ``True`` if all accepted telemetry was forwarded before shutdown,
+            ``False`` if some pending events could not be sent (these are
+            logged explicitly).
         """
         if self._closed:
-            return self._queue.qsize()
-        self._closed = True
+            return self._outstanding == 0
+
+        with self._lock:
+            self._closed = True
+
+        drained = self.flush(timeout=timeout)
+
         try:
-            self._queue.put_nowait(None)  # sentinel
+            self._queue.put_nowait(_SENTINEL)
         except queue.Full:  # pragma: no cover - defensive
             pass
+
         if self._worker is not None and self._worker.is_alive():
             self._worker.join(timeout=timeout)
-        return self._queue.qsize()
+
+        pending = self._queue.qsize()
+        if self._outstanding > 0 or pending > 0:
+            logger.warning(
+                "RATTER async close: %d queued item(s) and %d outstanding "
+                "event item(s) not forwarded during shutdown",
+                pending,
+                self._outstanding,
+            )
+            return False
+        return True

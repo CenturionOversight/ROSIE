@@ -199,3 +199,21 @@ class PeepShellExecutor:
         if event.event_type == OUTPUT_STDERR:
             return [event.payload.get("text", "")]
         return []
+
+    def close(self, timeout: float = 2.0) -> None:
+        """Release the executor's RATTER sink with a bounded flush.
+
+        Delegates to the asynchronous RATTER sink's ``close(timeout=...)`` so
+        queued PEEP telemetry gets a best-effort, bounded send before the CLI
+        exits.  When no RATTER sink is present this is a harmless no-op.  Never
+        raises, so it is safe to call from a CLI ``finally`` block.  Idempotent.
+        """
+        sink = self._ratter_sink
+        if sink is None:
+            return
+        close = getattr(sink, "close", None)
+        if callable(close):
+            try:
+                close(timeout=timeout)
+            except Exception:
+                pass
