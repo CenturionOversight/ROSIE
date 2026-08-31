@@ -6,15 +6,23 @@ The current runtime is deliberately small: LiteLLM handles model access, Pydanti
 
 ## Current capabilities
 
-ROSIE exposes seven tools to the model:
+ROSIE exposes ten tools to the model:
 
 - `list_directory` — list workspace directory contents natively.
-- `search_workspace` — search file names and text contents natively.
+- `search_workspace` — search file names and text contents natively (budget-bounded by `max_files`).
 - `inspect_file` — read UTF-8 text files with line numbers.
 - `preview_write_file` — generate a unified diff without changing disk.
 - `write_file` — write or create UTF-8 files after policy approval.
+- `apply_patch` — apply a small targeted edit to an existing UTF-8 file after policy approval.
 - `inspect_git_status` — run `git status --short` in the workspace.
+- `inspect_git_diff` — show the unstaged or staged diff, optionally path-filtered.
+- `inspect_git_log` — show recent commit history, optionally path-filtered.
 - `run_shell` — execute a shell command in the workspace after policy approval.
+
+Every standalone conversation begins with a compact ROSIE operating system
+prompt (see `wrapper/system_prompt.py`) that instructs the model to inspect
+before modifying, prefer native/read-only inspection tools, never invent
+results, and only claim verified work.
 
 ROSIE supports three execution policies:
 
@@ -130,8 +138,8 @@ python -m pytest tests/ -v
 Current verified baseline:
 
 ```text
-270 discovered
-269 passed
+324 discovered
+323 passed
 0 failed
 1 skipped
 ```
@@ -177,6 +185,7 @@ ROSIE/
 │   ├── context.py
 │   ├── policy.py
 │   ├── ratter_sink.py
+│   ├── system_prompt.py
 │   ├── tools.py
 │   └── peep_shell.py
 ├── tests/

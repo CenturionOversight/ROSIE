@@ -212,3 +212,53 @@ class TestSearchWorkspacePathSafety:
     def test_path_traversal_rejected(self, workspace):
         with pytest.raises(PathTraversalError):
             search_workspace("alpha", "../../../")
+
+
+class TestSearchWorkspaceScanBudget:
+    def test_match_beyond_previous_candidate_boundary_is_found(self, workspace):
+        """A match after max_results*4 files must still be found with max_files."""
+        # The old behavior only examined max_results*4 candidates. With
+        # max_results=1 that was 4 files, so a match in the 5th file would
+        # have been silently missed. The scan budget finds it.
+        for i in range(10):
+            (workspace / f"bulk_{i}.txt").write_text(f"needle_{i}\n")
+        result = search_workspace("needle_7", max_results=1, max_files=100)
+        assert "bulk_7.txt" in result
+
+    def test_search_stops_at_max_results(self, workspace):
+        for i in range(60):
+            (workspace / f"file_{i}.txt").write_text(f"unique_marker_{i}\n")
+        result = search_workspace("unique_marker", max_results=5, max_files=100)
+        # 5 matches, possibly plus no truncation notice (space exhausted).
+        lines = [l for l in result.splitlines() if not l.startswith("(")]
+        assert len(lines) == 5
+
+    def test_search_stops_at_max_files(self, workspace):
+        for i in range(20):
+            (workspace / f"f{i}.txt").write_text("marker\n")
+        # max_files=5 limits how many files are examined
+        result = search_workspace("marker", max_files=5, max_results=50)
+        assert "search truncated after 5 files" in result
+
+    def test_truncation_notice_present_when_budget_exhausted(self, workspace):
+        for i in range(10):
+            (workspace / f"f{i}.txt").write_text("marker\n")
+        result = search_workspace("marker", max_files=3, max_results=50)
+        assert "search truncated after 3 files" in result
+
+    def test_exhaustive_search_has_no_false_truncation(self, workspace):
+        for i in range(5):
+            (workspace / f"f{i}.txt").write_text("marker\n")
+        result = search_workspace("marker", max_files=100, max_results=50)
+        assert "truncated after" not in result
+
+    def test_path_name_hit_does_not_suppress_content_hits(self, workspace, tmp_path):
+        """A path matching the query must still be content-searched."""
+        # File whose name AND content both match.
+        (workspace / "needle_box.txt").write_text("needle is inside\n", encoding="utf-8")
+        result = search_workspace("needle", max_files=100)
+        lines = result.splitlines()
+        # Path hit: "needle_box.txt" (bare path)
+        assert any(l == "needle_box.txt" for l in lines)
+        # Content hit from the same file: "needle_box.txt:1:needle is inside"
+        assert any(l.startswith("needle_box.txt:") for l in lines)

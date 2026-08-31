@@ -1,8 +1,9 @@
 """Local execution handlers and OpenAI-format tool schemas.
 
-Defines seven core tools — list_directory, search_workspace, inspect_file,
-preview_write_file, write_file, inspect_git_status, and run_shell — backed
-by :mod:`pathlib`, :mod:`subprocess`, :mod:`difflib`, and :mod:`re`.
+Defines ten core tools — list_directory, search_workspace, inspect_file,
+preview_write_file, write_file, apply_patch, inspect_git_status,
+inspect_git_diff, inspect_git_log, and run_shell — backed by :mod:`pathlib`,
+:mod:`subprocess`, :mod:`difflib`, and :mod:`re`.
 
 All file-system operations are constrained to a workspace root set via
 :func:`set_workspace_root`.  The :func:`_resolve_safe_path` helper
@@ -13,8 +14,9 @@ returned by the model before they are forwarded to the underlying Python
 functions.
 
 Approval policies from :mod:`wrapper.policy` are honoured inside
-:func:`write_file` and :func:`run_shell` — file writes and shell commands
-are blocked until the user grants approval (or the policy auto-approves).
+:func:`write_file`, :func:`apply_patch`, and :func:`run_shell` — file writes,
+targeted patches, and shell commands are blocked until the user grants
+approval (or the policy auto-approves).
 """
 
 from __future__ import annotations
@@ -39,7 +41,10 @@ __all__ = [
     "inspect_file",
     "preview_write_file",
     "write_file",
+    "apply_patch",
     "inspect_git_status",
+    "inspect_git_diff",
+    "inspect_git_log",
     "run_shell",
     "TOOL_MODELS",
     "TOOL_REGISTRY",
@@ -239,6 +244,66 @@ class SearchWorkspaceArgs(BaseModel):
         ge=1,
         description="Maximum number of results to return (default 50).",
     )
+    max_files: int = Field(
+        default=5000,
+        ge=1,
+        description="Maximum number of files to examine before truncating the search (default 5000).",
+    )
+
+    model_config = {"extra": "forbid"}
+
+
+class ApplyPatchArgs(BaseModel):
+    """Arguments for :func:`apply_patch`."""
+
+    relative_path: str = Field(
+        ...,
+        description="Path to the file to edit, relative to the workspace root.",
+    )
+    old_text: str = Field(
+        ...,
+        description="The exact text to replace. Must occur exactly once in the file.",
+    )
+    new_text: str = Field(
+        ...,
+        description="The replacement text.",
+    )
+
+    model_config = {"extra": "forbid"}
+
+
+class InspectGitDiffArgs(BaseModel):
+    """Arguments for :func:`inspect_git_diff`."""
+
+    relative_path: str | None = Field(
+        default=None,
+        description="Optional path to restrict the diff to, relative to the workspace root.",
+    )
+    staged: bool = Field(
+        default=False,
+        description="If true, show the staged diff (git diff --cached) instead of the unstaged diff.",
+    )
+    max_chars: int = Field(
+        default=20000,
+        ge=1,
+        description="Maximum number of output characters to return (default 20000).",
+    )
+
+    model_config = {"extra": "forbid"}
+
+
+class InspectGitLogArgs(BaseModel):
+    """Arguments for :func:`inspect_git_log`."""
+
+    max_entries: int = Field(
+        default=10,
+        ge=1,
+        description="Maximum number of commits to return (default 10).",
+    )
+    relative_path: str | None = Field(
+        default=None,
+        description="Optional path to restrict the log to, relative to the workspace root.",
+    )
 
     model_config = {"extra": "forbid"}
 
@@ -250,7 +315,10 @@ TOOL_MODELS: dict[str, Optional[type[BaseModel]]] = {
     "inspect_file": InspectFileArgs,
     "preview_write_file": PreviewWriteFileArgs,
     "write_file": WriteFileArgs,
+    "apply_patch": ApplyPatchArgs,
     "inspect_git_status": None,
+    "inspect_git_diff": InspectGitDiffArgs,
+    "inspect_git_log": InspectGitLogArgs,
     "run_shell": RunShellArgs,
 }
 
@@ -271,27 +339,122 @@ _MAX_FILE_SCAN_BYTES = 1024 * 1024  # 1 MiB
 
 
 def _iter_workspace_files(
-    root: Path, relative_path: str, max_results: int
-) -> list[Path]:
-    """Yield workspace files under *relative_path*, skipping ignored dirs.
+    root: Path, relative_path: str, max_files: int
+) -> tuple[list[Path], bool]:
+    """Collect workspace files under *relative_path*, skipping ignored dirs.
 
-    Returns at most *max_results* paths.
+    Scans at most *max_files* files. Returns ``(files, truncated)`` where
+    *truncated* is ``True`` when the scan stopped because the budget was
+    exhausted before the subtree was fully covered.
     """
     start = _resolve_safe_path(root, relative_path)
     if not start.exists():
-        return []
+        return [], False
     if start.is_file():
-        return [start]
+        return [start], False
     collected: list[Path] = []
+    truncated = False
     for entry in sorted(start.rglob("*")):
-        if len(collected) >= max_results:
+        if len(collected) >= max_files:
+            truncated = True
             break
         parts = entry.relative_to(root).parts
         if any(part in _IGNORED_DIRS for part in parts):
             continue
         if entry.is_file():
             collected.append(entry)
-    return collected
+    return collected, truncated
+
+
+def search_workspace(
+    query: str,
+    relative_path: str = ".",
+    max_results: int = 50,
+    max_files: int = 5000,
+) -> str:
+    """Searches the workspace for a case-insensitive substring.
+
+    Searches both file names and UTF-8 text contents.  Binary files, files
+    larger than 1 MiB, and ignored directories (``.git``, ``node_modules``,
+    ``__pycache__``, etc.) are skipped.
+
+    Scanning is budget-bounded: files are examined in deterministic
+    (sorted) order until ``max_results`` matches are found, the subtree is
+    exhausted, or ``max_files`` files have been examined.  If the file
+    budget is exhausted before the subtree is fully covered, a trailing
+    ``(search truncated after N files; increase max_files to continue)``
+    notice is appended so a partial result is never silently presented as
+    exhaustive.
+
+    A file whose PATH matches the query is still content-searched — a
+    path-name hit does not suppress content hits from the same file.
+
+    Args:
+        query: Case-insensitive substring to search for.
+        relative_path: Subdirectory to limit the search to (default entire workspace).
+        max_results: Maximum number of results to return.
+        max_files: Maximum number of files to examine before truncating.
+
+    Returns:
+        A newline-separated list of matches.  Content matches are formatted as
+        ``path:line:text``.  Path-name matches show the relative path.
+
+    Raises:
+        PathTraversalError: If *relative_path* escapes the workspace root.
+    """
+    root = get_workspace_root()
+    start = _resolve_safe_path(root, relative_path)
+
+    if not start.exists():
+        return f"Path not found: {relative_path}"
+
+    if start.is_file():
+        files, truncated = [start], False
+    else:
+        files, truncated = _iter_workspace_files(root, relative_path, max_files)
+
+    query_lower = query.lower()
+    results: list[str] = []
+
+    for fpath in files:
+        if len(results) >= max_results:
+            break
+
+        rel = fpath.relative_to(root).as_posix()
+
+        # Path-name hit. Do NOT skip content search — a path match still
+        # allows the same file's text to contribute content hits.
+        path_hit = query_lower in rel.lower()
+        if path_hit:
+            results.append(rel)
+
+        # Content search (always examined, even on a path-name hit).
+        if len(results) >= max_results:
+            break
+        try:
+            raw = fpath.read_bytes()
+        except (OSError, PermissionError):
+            continue
+        if len(raw) > _MAX_FILE_SCAN_BYTES:
+            continue
+        try:
+            text = raw.decode("utf-8")
+        except (UnicodeDecodeError, ValueError):
+            continue
+        for lineno, line in enumerate(text.splitlines(), start=1):
+            if query_lower in line.lower():
+                results.append(f"{rel}:{lineno}:{line}")
+                if len(results) >= max_results:
+                    break
+
+    if truncated:
+        results.append(
+            f"(search truncated after {max_files} files; increase max_files to continue)"
+        )
+
+    if not results:
+        return f"No results found for '{query}'."
+    return "\n".join(results)
 
 
 def list_directory(relative_path: str = ".", recursive: bool = False, max_entries: int = 200) -> str:
@@ -349,76 +512,6 @@ def list_directory(relative_path: str = ".", recursive: bool = False, max_entrie
     if not entries:
         return "(empty)"
     return "\n".join(entries)
-
-
-def search_workspace(query: str, relative_path: str = ".", max_results: int = 50) -> str:
-    """Searches the workspace for a case-insensitive substring.
-
-    Searches both file names and UTF-8 text contents.  Binary files, files
-    larger than 1 MiB, and ignored directories (``.git``, ``node_modules``,
-    ``__pycache__``, etc.) are skipped.
-
-    Args:
-        query: Case-insensitive substring to search for.
-        relative_path: Subdirectory to limit the search to (default entire workspace).
-        max_results: Maximum number of results to return.
-
-    Returns:
-        A newline-separated list of matches.  Content matches are formatted as
-        ``path:line:text``.  Path-name matches show the relative path.
-
-    Raises:
-        PathTraversalError: If *relative_path* escapes the workspace root.
-    """
-    root = get_workspace_root()
-    start = _resolve_safe_path(root, relative_path)
-
-    if not start.exists():
-        return f"Path not found: {relative_path}"
-
-    if start.is_file():
-        files = [start]
-    else:
-        files = _iter_workspace_files(root, relative_path, max_results * 4)
-
-    query_lower = query.lower()
-    results: list[str] = []
-
-    for fpath in files:
-        if len(results) >= max_results:
-            break
-
-        rel = fpath.relative_to(root).as_posix()
-
-        # Check file name first (path-name hit).
-        if query_lower in rel.lower():
-            results.append(rel)
-            if len(results) >= max_results:
-                break
-            continue
-
-        # Content search.
-        if len(results) >= max_results:
-            break
-        try:
-            raw = fpath.read_bytes()
-        except (OSError, PermissionError):
-            continue
-        if len(raw) > _MAX_FILE_SCAN_BYTES:
-            continue
-        try:
-            text = raw.decode("utf-8")
-        except (UnicodeDecodeError, ValueError):
-            continue
-        for lineno, line in enumerate(text.splitlines(), start=1):
-            if query_lower in line.lower():
-                results.append(f"{rel}:{lineno}:{line}")
-                if len(results) >= max_results:
-                    break
-
-    if not results:
-        return f"No results found for '{query}'."
-    return "\n".join(results)
 
 
 def inspect_file(relative_path: str, start_line: int = 1, line_count: int = 100) -> str:
@@ -555,6 +648,76 @@ def write_file(relative_path: str, content: str) -> str:
     return f"Successfully wrote {line_count} line(s) to '{relative_path}'."
 
 
+def apply_patch(relative_path: str, old_text: str, new_text: str) -> str:
+    """Apply a small targeted edit to an existing UTF-8 text file.
+
+    ``old_text`` must occur EXACTLY ONCE in the file.  If it matches zero
+    times (error, no modification) or more than once (ambiguity error, no
+    modification), the file is left untouched.  No fuzzy matching and no
+    line-position guessing is performed.
+
+    A unified diff is generated and displayed before the edit.  The same
+    approval policy as :func:`write_file` is used; if denied, the file is
+    not modified.
+
+    Args:
+        relative_path: Path to the file relative to the workspace root.
+        old_text: The exact text to replace.
+        new_text: The replacement text.
+
+    Returns:
+        A concise success or error message.
+
+    Raises:
+        PathTraversalError: If the path escapes the workspace root.
+    """
+    root = get_workspace_root()
+    resolved = _resolve_safe_path(root, relative_path)
+
+    if not resolved.is_file():
+        return f"ERROR: File '{relative_path}' does not exist."
+
+    try:
+        text = resolved.read_text(encoding="utf-8")
+    except UnicodeDecodeError:
+        return f"ERROR: File '{relative_path}' appears to be binary and cannot be patched as text."
+
+    count = text.count(old_text)
+    if count == 0:
+        return (
+            f"ERROR: old_text not found in '{relative_path}'. "
+            f"File not modified."
+        )
+    if count > 1:
+        return (
+            f"ERROR: old_text matches {count} locations in '{relative_path}'. "
+            f"Provide a larger/more-specific old_text so it occurs exactly once. "
+            f"File not modified."
+        )
+
+    new_content = text.replace(old_text, new_text, 1)
+
+    # Generate and display the unified diff.
+    diff = preview_write_file(relative_path, new_content)
+    print(f"\n[diff preview for {relative_path}]\n{diff}\n{'=' * 60}")
+
+    # Enforce the same approval policy as write_file.
+    if _policy is not None:
+        approved = _policy.request_approval(
+            "write",
+            f"Apply patch to '{relative_path}'",
+            details=diff,
+        )
+        if not approved:
+            return (
+                f"DENIED: Patch to '{relative_path}' was rejected. "
+                f"File not modified."
+            )
+
+    resolved.write_text(new_content, encoding="utf-8")
+    return f"Successfully patched '{relative_path}'."
+
+
 def inspect_git_status() -> str:
     """Runs ``git status --short`` in the workspace root.
 
@@ -587,6 +750,129 @@ def inspect_git_status() -> str:
     if not output:
         return "Working tree is clean - no changes to report."
     return output
+
+
+def _run_git(
+    argv: list[str], root: Path, timeout: int = 30
+) -> str:
+    """Run a read-only ``git`` subprocess with a direct argument list.
+
+    Args:
+        argv: git arguments (excluding the leading ``git``).
+        root: Working directory in which to run git.
+
+    Returns:
+        The formatted result, or an ``Error: ...`` message for non-zero
+        exits, missing git, or timeouts.
+    """
+    try:
+        proc = subprocess.run(
+            ["git", *argv],
+            cwd=str(root),
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+        )
+    except FileNotFoundError:
+        return "Error: 'git' is not installed or not on PATH."
+    except subprocess.TimeoutExpired:
+        return f"Error: git {' '.join(argv[0:2])} timed out after {timeout} seconds."
+
+    if proc.returncode != 0:
+        err = proc.stderr.strip()
+        if err:
+            return f"git {' '.join(argv[0:2])} failed: {err}"
+        return f"Error: git {' '.join(argv[0:2])} returned a non-zero exit code."
+
+    return proc.stdout
+
+
+def inspect_git_diff(
+    relative_path: str | None = None,
+    staged: bool = False,
+    max_chars: int = 20000,
+) -> str:
+    """Runs a read-only ``git diff`` in the workspace root.
+
+    Without a ``relative_path`` and with ``staged=False`` this is
+    ``git diff`` (unstaged). With ``staged=True`` it is ``git diff --cached``.
+    When ``relative_path`` is supplied and stays inside the workspace, the
+    diff is restricted to that path using ``--``.
+
+    Args:
+        relative_path: Optional file/directory to restrict the diff to.
+        staged: If True, show the staged diff instead of the unstaged diff.
+        max_chars: Maximum number of output characters to return.
+
+    Returns:
+        The diff output, a clean no-diff message when empty, or an error
+        message.  Truncation is marked explicitly.
+
+    Raises:
+        PathTraversalError: If *relative_path* escapes the workspace root.
+    """
+    root = get_workspace_root()
+
+    argv: list[str] = ["diff"]
+    if staged:
+        argv.append("--cached")
+
+    if relative_path is not None:
+        resolved = _resolve_safe_path(root, relative_path)
+        rel = resolved.relative_to(root).as_posix()
+        argv.extend(["--", rel])
+
+    output = _run_git(argv, root)
+    if output.startswith("Error"):
+        return output
+
+    if not output.strip():
+        return "No changes to report."
+
+    if len(output) > max_chars:
+        output = output[:max_chars]
+        output += f"\n...(diff truncated at {max_chars} characters; increase max_chars to see more)"
+
+    return output
+
+
+def inspect_git_log(
+    max_entries: int = 10,
+    relative_path: str | None = None,
+) -> str:
+    """Runs a read-only ``git log`` in the workspace root.
+
+    Uses ``git log --oneline --decorate -n <N>``.  When ``relative_path`` is
+    supplied and stays inside the workspace, Git path filtering is applied
+    after ``--``.
+
+    Args:
+        max_entries: Maximum number of commits to return.
+        relative_path: Optional file/directory to restrict the log to.
+
+    Returns:
+        The commit history, or an error message.  No mutation occurs.
+
+    Raises:
+        PathTraversalError: If *relative_path* escapes the workspace root.
+    """
+    root = get_workspace_root()
+
+    argv: list[str] = ["log", "--oneline", "--decorate", "-n", str(max_entries)]
+
+    if relative_path is not None:
+        resolved = _resolve_safe_path(root, relative_path)
+        rel = resolved.relative_to(root).as_posix()
+        argv.extend(["--", rel])
+
+    output = _run_git(argv, root)
+    if output.startswith("Error"):
+        return output
+
+    if not output.strip():
+        return "No commits to report."
+
+    return output.rstrip()
 
 
 def run_shell(command: str, timeout: Optional[int] = 30) -> str:
@@ -641,7 +927,10 @@ TOOL_REGISTRY: dict[str, Any] = {
     "inspect_file": inspect_file,
     "preview_write_file": preview_write_file,
     "write_file": write_file,
+    "apply_patch": apply_patch,
     "inspect_git_status": inspect_git_status,
+    "inspect_git_diff": inspect_git_diff,
+    "inspect_git_log": inspect_git_log,
     "run_shell": run_shell,
 }
 

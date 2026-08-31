@@ -54,7 +54,8 @@ Responsibilities:
 - file inspection;
 - write previews;
 - file writes;
-- Git status inspection;
+- targeted patches (`apply_patch`);
+- Git status / diff / log inspection;
 - shell execution.
 
 ### `wrapper/policy.py`
@@ -70,6 +71,19 @@ It defines the three execution modes:
 Approval is enforced inside the mutating tools rather than only at the CLI boundary.
 
 ## Agent loop
+
+Every standalone conversation is seeded once with a compact operating system
+prompt (`wrapper/system_prompt.py`, `ROSIE_SYSTEM_PROMPT`) prepended as the
+leading `system` message. The context compactor always preserves this message,
+so it is present for one-shot, piped, and interactive sessions and never
+appears duplicated across turns. It is a plain string — never derived from
+another LLM call.
+
+PEEP is initialized exactly once per CLI startup: `main()` calls
+`_configure_peep_executor(root)` a single time and reports the result
+(`peep=attached` or `peep=unavailable fallback=subprocess reason=<...>`) in
+the startup banner. On any PEEP failure ROSIE falls back to the default
+subprocess shell executor and remains fully usable.
 
 For each user turn:
 
@@ -125,6 +139,11 @@ This applies to:
 - `inspect_file`
 - `preview_write_file`
 - `write_file`
+- `apply_patch`
+
+`inspect_git_status`, `inspect_git_diff`, and `inspect_git_log` operate in the
+workspace root; when a `relative_path` is supplied to the diff/log tools it is
+validated against the workspace root first.
 
 `inspect_git_status` operates in the workspace root.
 
@@ -135,6 +154,7 @@ This applies to:
 Mutating operations enforce policy at execution time:
 
 - `write_file` checks approval before writing;
+- `apply_patch` checks approval before patching (same policy as `write_file`);
 - `run_shell` checks approval before executing.
 
 This means callers that use ROSIE's registered tool functions still pass through the existing approval layer when a policy has been installed.

@@ -11,19 +11,24 @@ Quick start::
     python -m wrapper.cli --model gemini/gemini-2.5-pro --yolo
 
 Modules:
-    policy  — Approval state machine (ask / auto-write / yolo).
-    tools   — Local execution handlers + OpenAI-format tool schemas.
-    context — Deterministic conversation-history compaction.
-    cli     — REPL engine built on LiteLLM.
+    policy         — Approval state machine (ask / auto-write / yolo).
+    tools          — Local execution handlers + OpenAI-format tool schemas.
+    context        — Deterministic conversation-history compaction.
+    system_prompt  — The ROSIE operating system prompt.
+    cli            — REPL engine built on LiteLLM.
 """
 
 from wrapper.policy import ApprovalPolicy, ExecutionPolicy
+from wrapper.system_prompt import ROSIE_SYSTEM_PROMPT
 from wrapper.tools import (
     TOOL_MODELS,
     TOOL_REGISTRY,
     TOOL_SCHEMAS,
+    apply_patch,
     dispatch_tool,
     inspect_file,
+    inspect_git_diff,
+    inspect_git_log,
     inspect_git_status,
     list_directory,
     preview_write_file,
@@ -37,11 +42,15 @@ from wrapper.tools import (
 __all__ = [
     "ApprovalPolicy",
     "ExecutionPolicy",
+    "ROSIE_SYSTEM_PROMPT",
     "TOOL_MODELS",
     "TOOL_REGISTRY",
     "TOOL_SCHEMAS",
+    "apply_patch",
     "dispatch_tool",
     "inspect_file",
+    "inspect_git_diff",
+    "inspect_git_log",
     "inspect_git_status",
     "list_directory",
     "preview_write_file",

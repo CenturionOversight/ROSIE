@@ -184,11 +184,11 @@ class TestDispatchTool:
 
 
 class TestToolRegistryAndSchemas:
-    def test_tool_registry_has_seven_entries(self):
-        assert len(TOOL_REGISTRY) == 7
+    def test_tool_registry_has_ten_entries(self):
+        assert len(TOOL_REGISTRY) == 10
 
-    def test_tool_schemas_has_seven_entries(self):
-        assert len(TOOL_SCHEMAS) == 7
+    def test_tool_schemas_has_ten_entries(self):
+        assert len(TOOL_SCHEMAS) == 10
 
     def test_all_tools_in_registry_have_schemas(self):
         for name in TOOL_REGISTRY:
@@ -198,7 +198,7 @@ class TestToolRegistryAndSchemas:
 
     def test_schema_format_openai(self):
         # Tools where every arg has a default have no "required" field.
-        no_required = {"inspect_git_status", "list_directory"}
+        no_required = {"inspect_git_status", "list_directory", "inspect_git_diff", "inspect_git_log"}
         for schema in TOOL_SCHEMAS:
             assert schema["type"] == "function"
             assert "function" in schema
@@ -214,7 +214,7 @@ class TestToolRegistryAndSchemas:
 
     def test_required_fields(self):
         # Tools where every argument has a default have no "required" field.
-        no_required = {"inspect_git_status", "list_directory"}
+        no_required = {"inspect_git_status", "list_directory", "inspect_git_diff", "inspect_git_log"}
         for schema in TOOL_SCHEMAS:
             fn = schema["function"]
             if fn["name"] in no_required:

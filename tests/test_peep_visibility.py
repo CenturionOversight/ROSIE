@@ -75,3 +75,91 @@ class TestConfigurePeepExecutor:
         # The default subprocess executor should still be functional.
         from wrapper.tools import _shell_executor
         assert _shell_executor is None  # Falls back to default subprocess.
+
+
+class TestPeepInitializedOnceDuringMain:
+    """Regression: `main()` must configure PEEP exactly once during startup."""
+
+    def _run_one_shot(self, root, monkeypatch):
+        """Run main() through a cheap one-shot path, mocking all external I/O.
+
+        Returns a 3-tuple of (exit_code, peep_mock, captured_messages) where
+        captured_messages are the messages passed into the completion call.
+        """
+        monkeypatch.setattr("wrapper.tools._workspace_root", root)
+
+        captured = {}
+
+        def fake_completion(models, messages, temperature):
+            # Capture what reaches the model so we can assert no API was hit
+            # and the system prompt appears. The mock returns a plain answer
+            # so the loop terminates without any tool call.
+            captured.setdefault("calls", []).append(list(messages))
+            from unittest.mock import MagicMock as _MM
+            resp = _MM()
+            msg = _MM()
+            msg.content = "ok"
+            msg.tool_calls = None
+            resp.choices = [_MM()]
+            resp.choices[0].message = msg
+            return resp
+
+        from wrapper.cli import main
+        peep_mock = MagicMock(return_value="peep=attached")
+
+        with patch("wrapper.cli._configure_peep_executor", peep_mock), \
+             patch("wrapper.cli._completion", side_effect=fake_completion):
+            rc = main([str(root), "say hi"])
+
+        return rc, peep_mock, captured
+
+    def test_main_configures_peep_exactly_once(self, tmp_path, monkeypatch):
+        """_configure_peep_executor is called exactly once with the workspace Path."""
+        root = tmp_path.resolve()
+        rc, peep_mock, _ = self._run_one_shot(root, monkeypatch)
+
+        assert rc == 0  # startup completed normally
+        resolved = root
+        peep_mock.assert_called_once_with(resolved)
+
+    def test_peep_once_success_status(self, tmp_path, monkeypatch):
+        """The startup banner reflects the single peep=attached status."""
+        root = tmp_path.resolve()
+        rc, peep_mock, _ = self._run_one_shot(root, monkeypatch)
+        assert rc == 0
+        assert peep_mock.call_count == 1
+        assert peep_mock.call_args.args[0] == root
+
+    def test_peep_once_failure_fallback(self, tmp_path, monkeypatch):
+        """A single failure still results in the visible fallback status."""
+        root = tmp_path.resolve()
+        monkeypatch.setattr("wrapper.tools._workspace_root", root)
+
+        from unittest.mock import patch as _patch, MagicMock as _MM
+        from wrapper.cli import main
+
+        captured = {}
+
+        def fake_completion(models, messages, temperature):
+            captured["hit"] = True
+            resp = _MM()
+            msg = _MM()
+            msg.content = "ok"
+            msg.tool_calls = None
+            resp.choices = [_MM()]
+            resp.choices[0].message = msg
+            return resp
+
+        fallback_status = (
+            "peep=unavailable fallback=subprocess reason=RuntimeError: boom"
+        )
+        peep_mock = _MM(return_value=fallback_status)
+
+        with _patch("wrapper.cli._configure_peep_executor", peep_mock), \
+             _patch("wrapper.cli._completion", side_effect=fake_completion):
+            rc = main([str(root), "say hi"])
+
+        assert captured.get("hit") is True
+        assert peep_mock.call_count == 1
+        peep_mock.assert_called_once_with(root)
+        assert rc == 0

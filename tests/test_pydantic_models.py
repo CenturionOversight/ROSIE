@@ -3,7 +3,10 @@ import pytest
 from pydantic import ValidationError
 
 from wrapper.tools import (
+    ApplyPatchArgs,
     InspectFileArgs,
+    InspectGitDiffArgs,
+    InspectGitLogArgs,
     ListDirectoryArgs,
     PreviewWriteFileArgs,
     RunShellArgs,
@@ -120,12 +123,14 @@ class TestSearchWorkspaceArgs:
         assert args.query == "hello"
         assert args.relative_path == "."
         assert args.max_results == 50
+        assert args.max_files == 5000
 
     def test_valid_explicit(self):
-        args = SearchWorkspaceArgs(query="import", relative_path="src", max_results=10)
+        args = SearchWorkspaceArgs(query="import", relative_path="src", max_results=10, max_files=100)
         assert args.query == "import"
         assert args.relative_path == "src"
         assert args.max_results == 10
+        assert args.max_files == 100
 
     def test_missing_query_rejected(self):
         with pytest.raises(ValidationError):
@@ -135,6 +140,76 @@ class TestSearchWorkspaceArgs:
         with pytest.raises(ValidationError):
             SearchWorkspaceArgs(query="x", max_results=0)
 
+    def test_max_files_zero_rejected(self):
+        with pytest.raises(ValidationError):
+            SearchWorkspaceArgs(query="x", max_files=0)
+
     def test_extra_forbidden(self):
         with pytest.raises(ValidationError):
             SearchWorkspaceArgs(query="x", unknown="y")
+
+
+class TestApplyPatchArgs:
+    def test_valid(self):
+        args = ApplyPatchArgs(relative_path="f.txt", old_text="a", new_text="b")
+        assert args.relative_path == "f.txt"
+        assert args.old_text == "a"
+        assert args.new_text == "b"
+
+    def test_missing_path(self):
+        with pytest.raises(ValidationError):
+            ApplyPatchArgs(old_text="a", new_text="b")
+
+    def test_missing_old_text(self):
+        with pytest.raises(ValidationError):
+            ApplyPatchArgs(relative_path="f.txt", new_text="b")
+
+    def test_missing_new_text(self):
+        with pytest.raises(ValidationError):
+            ApplyPatchArgs(relative_path="f.txt", old_text="a")
+
+    def test_extra_forbidden(self):
+        with pytest.raises(ValidationError):
+            ApplyPatchArgs(relative_path="f.txt", old_text="a", new_text="b", extra="x")
+
+
+class TestInspectGitDiffArgs:
+    def test_valid_defaults(self):
+        args = InspectGitDiffArgs()
+        assert args.relative_path is None
+        assert args.staged is False
+        assert args.max_chars == 20000
+
+    def test_valid_explicit(self):
+        args = InspectGitDiffArgs(relative_path="src/main.py", staged=True, max_chars=5000)
+        assert args.relative_path == "src/main.py"
+        assert args.staged is True
+        assert args.max_chars == 5000
+
+    def test_max_chars_zero_rejected(self):
+        with pytest.raises(ValidationError):
+            InspectGitDiffArgs(max_chars=0)
+
+    def test_extra_forbidden(self):
+        with pytest.raises(ValidationError):
+            InspectGitDiffArgs(staged=True, unknown="x")
+
+
+class TestInspectGitLogArgs:
+    def test_valid_defaults(self):
+        args = InspectGitLogArgs()
+        assert args.max_entries == 10
+        assert args.relative_path is None
+
+    def test_valid_explicit(self):
+        args = InspectGitLogArgs(max_entries=5, relative_path="README.md")
+        assert args.max_entries == 5
+        assert args.relative_path == "README.md"
+
+    def test_max_entries_zero_rejected(self):
+        with pytest.raises(ValidationError):
+            InspectGitLogArgs(max_entries=0)
+
+    def test_extra_forbidden(self):
+        with pytest.raises(ValidationError):
+            InspectGitLogArgs(max_entries=5, unknown="x")

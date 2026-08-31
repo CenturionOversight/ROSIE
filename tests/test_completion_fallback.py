@@ -192,7 +192,7 @@ class TestCompletionFallback:
         with patch("wrapper.cli.litellm.completion", return_value=mock_response) as mock_completion:
             _completion(["model-a"], [], 0.2)
             assert "tools" in mock_completion.call_args.kwargs
-            assert len(mock_completion.call_args.kwargs["tools"]) == 7
+            assert len(mock_completion.call_args.kwargs["tools"]) == 10
 
     def test_completion_passes_messages_and_temperature(self):
         mock_response = _make_success_response("ok")

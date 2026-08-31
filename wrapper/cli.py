@@ -31,6 +31,7 @@ import litellm.exceptions as litellm_errors
 
 from wrapper.context import compact_history
 from wrapper.policy import ApprovalPolicy, ExecutionPolicy
+from wrapper.system_prompt import ROSIE_SYSTEM_PROMPT
 from wrapper.tools import (
     TOOL_SCHEMAS,
     get_workspace_root,
@@ -337,8 +338,6 @@ def main(argv: list[str] | None = None) -> int:
         os.environ.setdefault("VERTEXAI_PROJECT", "rosie-fire")
         os.environ.setdefault("VERTEXAI_LOCATION", "global")
 
-    peep_status = _configure_peep_executor(root)
-
     # --- Approval policy ---
     policy = ApprovalPolicy()
     policy.update_from_flags(yolo=args.yolo, auto_write=args.auto_write)
@@ -351,7 +350,13 @@ def main(argv: list[str] | None = None) -> int:
     )
 
     # --- Build initial messages ---
-    messages: list[dict[str, Any]] = []
+    # Every standalone ROSIE conversation starts with the operating system
+    # prompt. The context compactor always preserves this leading system
+    # message, and it is only seeded once so it never appears duplicated
+    # across turns.
+    messages: list[dict[str, Any]] = [
+        {"role": "system", "content": ROSIE_SYSTEM_PROMPT}
+    ]
 
     # --- Determine prompt source ---
     if args.prompt:
