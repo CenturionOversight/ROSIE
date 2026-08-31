@@ -738,8 +738,8 @@ def apply_patch(relative_path: str, old_text: str, new_text: str) -> str:
     not modified.
 
     Args:
-        relative_path: Path to the file relative to the workspace root.
-        old_text: The exact text to replace.
+        relative_path: Path to the file to edit, relative to the workspace root.
+        old_text: The exact text to replace. Must occur exactly once in the file.
         new_text: The replacement text.
 
     Returns:
@@ -1058,9 +1058,9 @@ def move_path(source_path: str, destination_path: str) -> str:
         except ValueError:
             pass
 
-    if not src.exists():
+    if not (src.exists() or src.is_symlink()):
         return f"ERROR: Source path '{source_path}' does not exist."
-    if dst.exists():
+    if dst.exists() or dst.is_symlink():
         return (
             f"ERROR: Destination '{destination_path}' already exists. "
             f"move_path never overwrites; choose a different destination."
