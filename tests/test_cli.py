@@ -1,5 +1,7 @@
 """Tests for the CLI argument parser and model chain construction."""
 
+import pytest
+
 from wrapper.cli import (
     FALLBACK_MODELS,
     _build_parser,
@@ -48,6 +50,12 @@ class TestArgumentParser:
         parser = _build_parser()
         args = parser.parse_args([".", "--max-iterations", "50"])
         assert args.max_iterations == 50
+
+    @pytest.mark.parametrize("value", ["0", "-1"])
+    def test_max_iterations_must_be_positive(self, value):
+        parser = _build_parser()
+        with pytest.raises(SystemExit):
+            parser.parse_args([".", "--max-iterations", value])
 
     def test_history_turns(self):
         parser = _build_parser()
