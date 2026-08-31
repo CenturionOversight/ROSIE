@@ -20,7 +20,6 @@ import urllib.error
 import urllib.request
 from datetime import UTC, datetime
 from typing import Any, Iterable
-from uuid import uuid4
 
 from peep.events import PeepEvent
 
