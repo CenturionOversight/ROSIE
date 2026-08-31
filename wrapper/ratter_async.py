@@ -71,6 +71,11 @@ class AsyncRatterSink:
         batch_size: int = DEFAULT_BATCH_SIZE,
         auto_start: bool = True,
     ) -> None:
+        if queue_size < 1:
+            raise ValueError("queue_size must be at least 1")
+        if batch_size < 1:
+            raise ValueError("batch_size must be at least 1")
+
         self._sink = sink if sink is not None else RatterSink()
         self._queue: queue.Queue[tuple[list[PeepEvent], str | None, str | None] | None] = (
             queue.Queue(maxsize=queue_size)
