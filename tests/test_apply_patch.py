@@ -1,6 +1,4 @@
 """Tests for the apply_patch targeted-edit tool."""
-from pathlib import Path
-from unittest.mock import patch
 
 import pytest
 
@@ -8,10 +6,8 @@ from wrapper.policy import ApprovalPolicy, ExecutionPolicy
 from wrapper.tools import (
     PathTraversalError,
     apply_patch,
-    inspect_file,
     set_policy,
     set_workspace_root,
-    write_file,
 )
 
 

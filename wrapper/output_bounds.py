@@ -97,8 +97,7 @@ def box_output(
     if tail_len < 1:
         tail_len = 1
         head_len = avail - 1
-        if head_len < 1:
-            head_len = 1
+        head_len = max(head_len, 1)
 
     head = text[:head_len]
     tail = text[-tail_len:]
@@ -164,7 +163,7 @@ def format_shell_result(
     stderr: str = "",
     exit_code: int | None,
     timed_out: bool = False,
-    timeout_seconds: int | float = 30,
+    timeout_seconds: float = 30,
     max_chars: int = DEFAULT_MAX_OUTPUT_CHARS,
 ) -> str:
     """Build the shared, bounded shell-executor result block.

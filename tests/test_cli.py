@@ -1,7 +1,11 @@
 """Tests for the CLI argument parser and model chain construction."""
-import pytest
 
-from wrapper.cli import _build_parser, FALLBACK_MODELS, _is_ollama_model, _is_vertex_model
+from wrapper.cli import (
+    FALLBACK_MODELS,
+    _build_parser,
+    _is_ollama_model,
+    _is_vertex_model,
+)
 
 
 class TestArgumentParser:

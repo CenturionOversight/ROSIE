@@ -1,6 +1,5 @@
 """Tests for path traversal protection and path resolution."""
 import sys
-from pathlib import Path
 
 import pytest
 

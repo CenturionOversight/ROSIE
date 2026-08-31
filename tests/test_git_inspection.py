@@ -1,6 +1,5 @@
 """Tests for the native read-only Git inspection tools."""
-from pathlib import Path
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch
 
 import pytest
 
@@ -8,7 +7,6 @@ from wrapper.tools import (
     PathTraversalError,
     inspect_git_diff,
     inspect_git_log,
-    inspect_git_status,
     set_workspace_root,
 )
 
@@ -124,7 +122,7 @@ class TestInspectGitLog:
 
 
 # ------------------------------------------------------------------
-# TARGET 5 â€” Bounded git diff tests
+# TARGET 5 - Bounded git diff tests
 # ------------------------------------------------------------------
 
 class TestBoundedGitDiff:

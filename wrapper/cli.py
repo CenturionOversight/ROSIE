@@ -26,11 +26,10 @@ from pathlib import Path
 from typing import Any
 
 import litellm
-
 import litellm.exceptions as litellm_errors
 
 from wrapper.context import compact_history
-from wrapper.policy import ApprovalPolicy, ExecutionPolicy
+from wrapper.policy import ApprovalPolicy
 from wrapper.system_prompt import ROSIE_SYSTEM_PROMPT
 from wrapper.tools import (
     TOOL_SCHEMAS,
@@ -464,7 +463,7 @@ def _run_turn(
 
 def _is_ollama_model(model: str) -> bool:
     """Return True if the model string targets a local Ollama endpoint."""
-    return model.startswith("ollama/") or model.startswith("ollama;")
+    return model.startswith(("ollama/", "ollama;"))
 
 
 def _is_vertex_model(model: str) -> bool:

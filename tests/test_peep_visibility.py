@@ -1,11 +1,9 @@
 """Tests for visible PEEP attachment/fallback state in _configure_peep_executor."""
 import sys
 from pathlib import Path
-from unittest.mock import patch, MagicMock
+from unittest.mock import MagicMock, patch
 
-import pytest
-
-from wrapper.tools import get_workspace_root, set_workspace_root
+from wrapper.tools import set_workspace_root
 
 
 class TestConfigurePeepExecutor:
@@ -135,7 +133,9 @@ class TestPeepInitializedOnceDuringMain:
         root = tmp_path.resolve()
         monkeypatch.setattr("wrapper.tools._workspace_root", root)
 
-        from unittest.mock import patch as _patch, MagicMock as _MM
+        from unittest.mock import MagicMock as _MM
+        from unittest.mock import patch as _patch
+
         from wrapper.cli import main
 
         captured = {}

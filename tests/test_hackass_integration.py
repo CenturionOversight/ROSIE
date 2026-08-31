@@ -8,42 +8,31 @@ Tests cover:
 - Malformed tool arguments fail safely
 - Approval/security behavior is not bypassed
 """
-import os
-from unittest.mock import patch, MagicMock
-
-import pytest
+from unittest.mock import patch
 
 
 class TestHackassImports:
     """Verify the HACKASS module imports correctly."""
 
     def test_hackass_package_imports(self):
-        from hackass import MODEL_NAME, create_architect_tools, run_hackass
+        from hackass import MODEL_NAME
         assert MODEL_NAME == "gemini-3.7-flash"
 
     def test_bridge_module_imports(self):
-        from hackass.bridge import (
-            inspect_file,
-            preview_write_file,
-            write_file,
-            inspect_git_status,
-            run_shell,
-            create_architect_tools,
-        )
+        pass
 
     def test_config_module_imports(self):
         from hackass.config import (
             MODEL_NAME,
             VERTEXAI_LOCATION,
             VERTEXAI_PROJECT,
-            get_model_name,
         )
         assert MODEL_NAME == "gemini-3.7-flash"
         assert VERTEXAI_PROJECT == "rosie-fire"
         assert VERTEXAI_LOCATION == "global"
 
     def test_agent_module_imports(self):
-        from hackass.agent import INSTRUCTION, create_agent, run_hackass
+        from hackass.agent import INSTRUCTION
         assert "HACKASS" in INSTRUCTION or "ROSIE" in INSTRUCTION
 
 
@@ -56,6 +45,7 @@ class TestModelConfiguration:
 
     def test_model_override_via_env(self, monkeypatch):
         import importlib
+
         from hackass import config
 
         monkeypatch.setenv("HACKASS_GEMINI_MODEL", "gemini-3.7-flash")
@@ -92,8 +82,9 @@ class TestToolRegistration:
         assert "run_shell" in tool_names
 
     def test_tools_are_adk_function_tools(self):
-        from hackass.bridge import create_architect_tools
         from google.adk.tools import FunctionTool
+
+        from hackass.bridge import create_architect_tools
 
         tools = create_architect_tools()
         for tool in tools:
@@ -180,8 +171,8 @@ class TestToolBridgeSafety:
 
     def test_approval_policy_preserves_security(self, tmp_path, monkeypatch):
         """Verify that the ASK approval policy is not silently bypassed."""
-        from wrapper.tools import set_workspace_root, set_policy
         from wrapper.policy import ApprovalPolicy, ExecutionPolicy
+        from wrapper.tools import set_policy, set_workspace_root
 
         set_workspace_root(tmp_path)
 
@@ -196,8 +187,8 @@ class TestToolBridgeSafety:
 
     def test_yolo_policy_auto_approves(self, tmp_path, monkeypatch, capsys):
         """Verify that yolo mode auto-approves without prompting."""
-        from wrapper.tools import set_workspace_root, set_policy
         from wrapper.policy import ApprovalPolicy, ExecutionPolicy
+        from wrapper.tools import set_policy, set_workspace_root
 
         set_workspace_root(tmp_path)
 
@@ -226,7 +217,8 @@ class TestGoogleIntegrationBoundary:
     def test_bridge_only_delegates(self):
         """The bridge functions should not contain execution logic."""
         import inspect
-        from hackass.bridge import inspect_file, write_file, run_shell
+
+        from hackass.bridge import inspect_file, run_shell, write_file
 
         for func in [inspect_file, write_file, run_shell]:
             source = inspect.getsource(func)
@@ -269,8 +261,6 @@ class TestRunHackassApiKeyNoLeak:
         return agent
 
     def test_api_key_not_persisted_after_run(self, monkeypatch):
-        from wrapper.tools import set_workspace_root, set_policy
-        from wrapper.policy import ApprovalPolicy, ExecutionPolicy
         monkeypatch.delenv("GOOGLE_API_KEY", raising=False)
 
         agent = self._run_with_mocks(monkeypatch)

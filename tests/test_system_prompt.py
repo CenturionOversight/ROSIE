@@ -1,7 +1,5 @@
 """Tests for the ROSIE operating system prompt seeding."""
-from unittest.mock import patch, MagicMock
-
-import pytest
+from unittest.mock import MagicMock, patch
 
 from wrapper.cli import main
 from wrapper.context import compact_history

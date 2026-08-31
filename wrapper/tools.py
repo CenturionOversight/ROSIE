@@ -26,34 +26,34 @@ import difflib
 import shutil
 import subprocess
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 from pydantic import BaseModel, Field
 
 from wrapper.policy import ApprovalPolicy
 
 __all__ = [
-    "PathTraversalError",
-    "set_workspace_root",
-    "get_workspace_root",
-    "set_policy",
-    "set_shell_executor",
-    "list_directory",
-    "search_workspace",
-    "inspect_file",
-    "preview_write_file",
-    "write_file",
-    "apply_patch",
-    "inspect_git_status",
-    "inspect_git_diff",
-    "inspect_git_log",
-    "run_shell",
-    "move_path",
-    "delete_path",
     "TOOL_MODELS",
     "TOOL_REGISTRY",
     "TOOL_SCHEMAS",
+    "PathTraversalError",
+    "apply_patch",
+    "delete_path",
     "dispatch_tool",
+    "get_workspace_root",
+    "inspect_file",
+    "inspect_git_diff",
+    "inspect_git_log",
+    "inspect_git_status",
+    "list_directory",
+    "move_path",
+    "preview_write_file",
+    "run_shell",
+    "search_workspace",
+    "set_policy",
+    "set_shell_executor",
+    "set_workspace_root",
+    "write_file",
 ]
 
 
@@ -61,8 +61,8 @@ __all__ = [
 # Workspace root & policy management
 # ---------------------------------------------------------------------------
 
-_workspace_root: Optional[Path] = None
-_policy: Optional[ApprovalPolicy] = None
+_workspace_root: Path | None = None
+_policy: ApprovalPolicy | None = None
 _shell_executor: Any = None
 
 
@@ -94,6 +94,7 @@ def _default_shell_executor(command: str, timeout: int) -> str:
             capture_output=True,
             text=True,
             timeout=timeout,
+            check=False,
         )
         return format_shell_result(
             command,
@@ -251,7 +252,7 @@ class RunShellArgs(BaseModel):
     """Arguments for :func:`run_shell`."""
 
     command: str = Field(..., description="Shell command to execute.")
-    timeout: Optional[int] = Field(default=None, ge=1, description="Optional timeout in seconds.")
+    timeout: int | None = Field(default=None, ge=1, description="Optional timeout in seconds.")
 
     model_config = {"extra": "forbid"}
 
@@ -384,7 +385,7 @@ class InspectGitLogArgs(BaseModel):
 
 
 #: Mapping of tool name -> pydantic model (or ``None`` for no-arg tools).
-TOOL_MODELS: dict[str, Optional[type[BaseModel]]] = {
+TOOL_MODELS: dict[str, type[BaseModel] | None] = {
     "list_directory": ListDirectoryArgs,
     "search_workspace": SearchWorkspaceArgs,
     "inspect_file": InspectFileArgs,
@@ -621,8 +622,7 @@ def inspect_file(relative_path: str, start_line: int = 1, line_count: int = 100)
 
     lines = text.splitlines()
 
-    if start_line < 1:
-        start_line = 1
+    start_line = max(start_line, 1)
 
     total = len(lines)
     if start_line > total:
@@ -674,7 +674,7 @@ def preview_write_file(relative_path: str, content: str) -> str:
     )
     diff_text = "".join(diff_iter)
     if not diff_text:
-        return f"No changes - the proposed content is identical to the current file."
+        return "No changes - the proposed content is identical to the current file."
     return diff_text
 
 
@@ -811,6 +811,7 @@ def inspect_git_status() -> str:
             capture_output=True,
             text=True,
             timeout=30,
+            check=False,
         )
     except FileNotFoundError:
         return "Error: 'git' is not installed or not on PATH."
@@ -849,6 +850,7 @@ def _run_git(
             capture_output=True,
             text=True,
             timeout=timeout,
+            check=False,
         )
     except FileNotFoundError:
         return "Error: 'git' is not installed or not on PATH."
@@ -962,7 +964,7 @@ def inspect_git_log(
     return output.rstrip()
 
 
-def run_shell(command: str, timeout: Optional[int] = 30) -> str:
+def run_shell(command: str, timeout: int | None = 30) -> str:
     """Executes a shell command within the workspace directory.
 
     The approval policy is consulted first: in ``ask`` mode the user
@@ -1180,7 +1182,7 @@ def _build_parameter_schema(model_cls: type[BaseModel]) -> dict[str, Any]:
     return schema
 
 
-def _build_tool_schema(name: str, func: Any, model_cls: Optional[type[BaseModel]]) -> dict[str, Any]:
+def _build_tool_schema(name: str, func: Any, model_cls: type[BaseModel] | None) -> dict[str, Any]:
     """Build an OpenAI-format tool definition dictionary."""
     description = (func.__doc__ or "").strip()
     if model_cls is not None:

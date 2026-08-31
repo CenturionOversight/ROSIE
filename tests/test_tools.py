@@ -1,13 +1,12 @@
 """Tests for tool functions: inspect_file, write_file, run_shell, inspect_git_status, dispatch_tool."""
-import json
-from pathlib import Path
-from unittest.mock import patch, MagicMock
+from unittest.mock import MagicMock
 
 import pytest
 
+from wrapper.policy import ApprovalPolicy
 from wrapper.tools import (
-    TOOL_SCHEMAS,
     TOOL_REGISTRY,
+    TOOL_SCHEMAS,
     dispatch_tool,
     inspect_file,
     inspect_git_status,
@@ -17,7 +16,6 @@ from wrapper.tools import (
     set_workspace_root,
     write_file,
 )
-from wrapper.policy import ApprovalPolicy
 
 
 @pytest.fixture

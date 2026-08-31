@@ -9,9 +9,9 @@ tool/execution layer (the ``wrapper`` package) through a narrow adapter.
 Google-specific concerns are confined to this package. The ``wrapper``
 package (ARCHESTRATOR core) remains unchanged.
 """
-from hackass.config import MODEL_NAME
-from hackass.bridge import create_architect_tools
 from hackass.agent import run_hackass
+from hackass.bridge import create_architect_tools
+from hackass.config import MODEL_NAME
 
 __all__ = [
     "MODEL_NAME",

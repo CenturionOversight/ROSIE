@@ -11,7 +11,7 @@ Covers the intended behavior from the execution-hardening cleanup pass:
 """
 from __future__ import annotations
 
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
 

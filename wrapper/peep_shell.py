@@ -13,7 +13,6 @@ from __future__ import annotations
 import time
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Optional
 from uuid import uuid4
 
 from peep.command import COMMAND_STATE_CREATED, PeepCommand
@@ -24,7 +23,6 @@ from peep.events import (
     OUTPUT_STDOUT,
     PROCESS_EXITED,
     SESSION_ENDED,
-    SESSION_STARTED,
     PeepEvent,
 )
 from peep.factory import EventFactory
@@ -60,7 +58,7 @@ class PeepShellExecutor:
         self._cwd = str(Path(cwd).resolve()) if cwd is not None else None
         self._ratter_sink = _get_ratter_sink()
 
-    def __call__(self, command: str, timeout: Optional[int] = 30) -> str:
+    def __call__(self, command: str, timeout: int | None = 30) -> str:
         """Execute a shell command through PEEP PowerShell.
 
         Allows PeepShellExecutor to be used as the shell executor callable
@@ -68,7 +66,7 @@ class PeepShellExecutor:
         """
         return self.execute(command, timeout)
 
-    def execute(self, command: str, timeout: Optional[int] = 30) -> str:
+    def execute(self, command: str, timeout: int | None = 30) -> str:
         """Execute a shell command through PEEP PowerShell and return ROSIE format.
 
         Args:
@@ -114,10 +112,10 @@ class PeepShellExecutor:
 
         stdout_lines: list[str] = []
         stderr_lines: list[str] = []
-        exit_code: Optional[int] = None
+        exit_code: int | None = None
         completed = False
         timed_out = False
-        command_id_for_ratter: Optional[str] = None
+        command_id_for_ratter: str | None = None
 
         def _forward_to_ratter(events: list[PeepEvent]) -> None:
             """Forward PEEP events to RATTER (async, never blocking). Never raises."""
@@ -125,11 +123,9 @@ class PeepShellExecutor:
                 return
             nonlocal command_id_for_ratter
             for e in events:
-                if e.event_type == COMMAND_OBSERVED:
+                if e.event_type == COMMAND_OBSERVED or (e.event_type == COMMAND_COMPLETED
+                      and command_id_for_ratter is None):
                     command_id_for_ratter = e.payload.get("command_id")
-                elif e.event_type == COMMAND_COMPLETED:
-                    if command_id_for_ratter is None:
-                        command_id_for_ratter = e.payload.get("command_id")
             try:
                 self._ratter_sink.send_peep_events(
                     events,

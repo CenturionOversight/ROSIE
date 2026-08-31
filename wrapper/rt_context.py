@@ -24,9 +24,9 @@ from __future__ import annotations
 from contextvars import ContextVar, Token
 
 __all__ = [
-    "set_current_task_id",
-    "reset_current_task_id",
     "get_current_task_id",
+    "reset_current_task_id",
+    "set_current_task_id",
 ]
 
 _current_task_id: ContextVar[str | None] = ContextVar("rosie_current_task_id", default=None)

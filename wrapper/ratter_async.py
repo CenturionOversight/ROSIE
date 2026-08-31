@@ -31,7 +31,8 @@ import logging
 import queue
 import threading
 import time
-from typing import Any, Iterable
+from collections.abc import Iterable
+from typing import Any
 
 from peep.events import PeepEvent
 
@@ -71,7 +72,7 @@ class AsyncRatterSink:
         auto_start: bool = True,
     ) -> None:
         self._sink = sink if sink is not None else RatterSink()
-        self._queue: "queue.Queue[tuple[list[PeepEvent], str | None, str | None] | None]" = (
+        self._queue: queue.Queue[tuple[list[PeepEvent], str | None, str | None] | None] = (
             queue.Queue(maxsize=queue_size)
         )
         self._batch_size = batch_size
@@ -242,7 +243,7 @@ class AsyncRatterSink:
 
         # Best-effort flush with remaining time.
         remaining = max(0, deadline - time.monotonic())
-        drained = self.flush(timeout=remaining)
+        self.flush(timeout=remaining)
 
         # Signal worker shutdown.
         try:

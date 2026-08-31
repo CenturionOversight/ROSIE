@@ -12,8 +12,7 @@ Tests cover:
 """
 from __future__ import annotations
 
-from pathlib import Path
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch
 
 import pytest
 
@@ -25,8 +24,8 @@ class TestApprovalGate:
 
     def test_peep_executor_approval_denied(self, tmp_path, monkeypatch):
         """Denial in ask mode should prevent execution entirely."""
-        from wrapper.tools import set_workspace_root, set_policy
         from wrapper.policy import ApprovalPolicy, ExecutionPolicy
+        from wrapper.tools import set_policy, set_workspace_root
 
         set_workspace_root(tmp_path)
         monkeypatch.setattr("wrapper.tools._shell_executor", PeepShellExecutor(cwd=str(tmp_path)), raising=False)
@@ -42,8 +41,8 @@ class TestApprovalGate:
 
     def test_peep_executor_approval_granted(self, tmp_path, monkeypatch):
         """Approval in ask mode should allow execution through PEEP."""
-        from wrapper.tools import set_workspace_root, set_policy
         from wrapper.policy import ApprovalPolicy, ExecutionPolicy
+        from wrapper.tools import set_policy, set_workspace_root
 
         set_workspace_root(tmp_path)
         monkeypatch.setattr("wrapper.tools._shell_executor", PeepShellExecutor(cwd=str(tmp_path)), raising=False)
@@ -64,9 +63,8 @@ class TestLocalCliConfiguresPeep:
 
     def test_cli_configures_peep_executor(self, tmp_path):
         """_configure_peep_executor should call set_shell_executor."""
-        from wrapper import cli
-        from wrapper.tools import _shell_executor
         import wrapper.tools as tools_mod
+        from wrapper import cli
 
         original = tools_mod._shell_executor
         tools_mod._shell_executor = None
@@ -80,9 +78,10 @@ class TestLocalCliConfiguresPeep:
 
     def test_peep_not_available_falls_back(self, tmp_path):
         """When PEEP is not importable, the default executor is used."""
-        from wrapper import cli
-        import wrapper.tools as tools_mod
         import builtins
+
+        import wrapper.tools as tools_mod
+        from wrapper import cli
 
         original = tools_mod._shell_executor
         tools_mod._shell_executor = None
@@ -107,14 +106,14 @@ class TestPeepResultFormat:
     """Verify PEEP-backed shell returns the existing ROSIE result format."""
 
     def test_peep_result_has_command_line(self, tmp_path):
-        from wrapper.tools import set_workspace_root, set_policy, run_shell
         from wrapper.policy import ApprovalPolicy, ExecutionPolicy
+        from wrapper.tools import run_shell, set_policy, set_workspace_root
 
         set_workspace_root(tmp_path)
         set_policy(ApprovalPolicy(ExecutionPolicy.YOLO))
 
-        from wrapper.peep_shell import PeepShellExecutor
         import wrapper.tools as tools_mod
+        from wrapper.peep_shell import PeepShellExecutor
         original = tools_mod._shell_executor
         tools_mod._shell_executor = PeepShellExecutor(cwd=str(tmp_path))
         try:
@@ -128,14 +127,14 @@ class TestPeepResultFormat:
         assert "EXIT_CODE:" in result
 
     def test_peep_stdout_preserved(self, tmp_path):
-        from wrapper.tools import set_workspace_root, set_policy, run_shell
         from wrapper.policy import ApprovalPolicy, ExecutionPolicy
+        from wrapper.tools import run_shell, set_policy, set_workspace_root
 
         set_workspace_root(tmp_path)
         set_policy(ApprovalPolicy(ExecutionPolicy.YOLO))
 
-        from wrapper.peep_shell import PeepShellExecutor
         import wrapper.tools as tools_mod
+        from wrapper.peep_shell import PeepShellExecutor
         original = tools_mod._shell_executor
         tools_mod._shell_executor = PeepShellExecutor(cwd=str(tmp_path))
         try:
@@ -146,14 +145,14 @@ class TestPeepResultFormat:
         assert "test-output-line" in result
 
     def test_peep_stderr_preserved(self, tmp_path):
-        from wrapper.tools import set_workspace_root, set_policy, run_shell
         from wrapper.policy import ApprovalPolicy, ExecutionPolicy
+        from wrapper.tools import run_shell, set_policy, set_workspace_root
 
         set_workspace_root(tmp_path)
         set_policy(ApprovalPolicy(ExecutionPolicy.YOLO))
 
-        from wrapper.peep_shell import PeepShellExecutor
         import wrapper.tools as tools_mod
+        from wrapper.peep_shell import PeepShellExecutor
         original = tools_mod._shell_executor
         tools_mod._shell_executor = PeepShellExecutor(cwd=str(tmp_path))
         try:
@@ -165,14 +164,14 @@ class TestPeepResultFormat:
         assert "test-error-message" in result
 
     def test_peep_exit_code_preserved(self, tmp_path):
-        from wrapper.tools import set_workspace_root, set_policy, run_shell
         from wrapper.policy import ApprovalPolicy, ExecutionPolicy
+        from wrapper.tools import run_shell, set_policy, set_workspace_root
 
         set_workspace_root(tmp_path)
         set_policy(ApprovalPolicy(ExecutionPolicy.YOLO))
 
-        from wrapper.peep_shell import PeepShellExecutor
         import wrapper.tools as tools_mod
+        from wrapper.peep_shell import PeepShellExecutor
         original = tools_mod._shell_executor
         tools_mod._shell_executor = PeepShellExecutor(cwd=str(tmp_path))
         try:
@@ -187,14 +186,14 @@ class TestWorkspaceCwd:
     """Verify workspace cwd is respected through PEEP."""
 
     def test_peep_cwd_matches_workspace(self, tmp_path):
-        from wrapper.tools import set_workspace_root, set_policy, run_shell
         from wrapper.policy import ApprovalPolicy, ExecutionPolicy
+        from wrapper.tools import run_shell, set_policy, set_workspace_root
 
         set_workspace_root(tmp_path)
         set_policy(ApprovalPolicy(ExecutionPolicy.YOLO))
 
-        from wrapper.peep_shell import PeepShellExecutor
         import wrapper.tools as tools_mod
+        from wrapper.peep_shell import PeepShellExecutor
         original = tools_mod._shell_executor
         tools_mod._shell_executor = PeepShellExecutor(cwd=str(tmp_path))
         try:
@@ -210,8 +209,13 @@ class TestDefaultExecutorUnaffected:
     """Verify the default executor works without PEEP configuration."""
 
     def test_default_executor_still_works(self, tmp_path):
-        from wrapper.tools import set_workspace_root, set_policy, run_shell, set_shell_executor
         from wrapper.policy import ApprovalPolicy, ExecutionPolicy
+        from wrapper.tools import (
+            run_shell,
+            set_policy,
+            set_shell_executor,
+            set_workspace_root,
+        )
 
         set_workspace_root(tmp_path)
         set_policy(ApprovalPolicy(ExecutionPolicy.YOLO))
@@ -224,7 +228,8 @@ class TestDefaultExecutorUnaffected:
     def test_hackass_bridge_no_peep_dependency(self):
         """Verify the hackass bridge doesn't import PEEP."""
         import inspect
-        from hackass.bridge import inspect_file, write_file, run_shell
+
+        from hackass.bridge import inspect_file, run_shell, write_file
 
         for func in [inspect_file, write_file, run_shell]:
             source = inspect.getsource(func)
@@ -237,29 +242,30 @@ class TestPeeperCwdSupport:
 
     def test_powershell_adapter_accepts_cwd(self):
         """PowerShellAdapter should accept an optional cwd parameter."""
-        from peep.powershell import PowerShellAdapter
-
         import inspect
+
+        from peep.powershell import PowerShellAdapter
         sig = inspect.signature(PowerShellAdapter.__init__)
         params = list(sig.parameters.keys())
         assert "cwd" in params, "PowerShellAdapter.__init__ must accept cwd"
 
     def test_powershell_adapter_cwd_default_none(self):
         """When cwd is not provided, it defaults to None (backward compatible)."""
-        from peep.powershell import PowerShellAdapter
-
         import inspect
+
+        from peep.powershell import PowerShellAdapter
         sig = inspect.signature(PowerShellAdapter.__init__)
         cwd_param = sig.parameters["cwd"]
         assert cwd_param.default is None
 
     def test_powershell_adapter_no_cwd_still_works(self, tmp_path):
         """Existing constructor behavior (no cwd) remains valid."""
+        import shutil
         from datetime import UTC, datetime
-        from peep.session import SESSION_STATE_ACTIVE, PeepSession
+
         from peep.factory import EventFactory
         from peep.powershell import PowerShellAdapter
-        import shutil
+        from peep.session import SESSION_STATE_ACTIVE, PeepSession
 
         if shutil.which("powershell.exe") is None and shutil.which("pwsh.exe") is None:
             pytest.skip("PowerShell not available")

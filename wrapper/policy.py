@@ -14,9 +14,8 @@ from __future__ import annotations
 
 import enum
 import sys
-from typing import Optional
 
-__all__ = ["ExecutionPolicy", "ApprovalPolicy"]
+__all__ = ["ApprovalPolicy", "ExecutionPolicy"]
 
 
 class ExecutionPolicy(str, enum.Enum):
@@ -56,9 +55,7 @@ class ApprovalPolicy:
         """
         if self.mode == ExecutionPolicy.YOLO:
             return True
-        if self.mode == ExecutionPolicy.AUTO_WRITE and action == "write":
-            return True
-        return False
+        return self.mode == ExecutionPolicy.AUTO_WRITE and action == "write"
 
     def request_approval(
         self,

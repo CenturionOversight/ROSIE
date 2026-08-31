@@ -14,17 +14,15 @@ This preserves the established provenance boundary:
 """
 from __future__ import annotations
 
-from typing import Optional
-
 from wrapper.tools import dispatch_tool
 
 __all__ = [
-    "inspect_file",
-    "preview_write_file",
-    "write_file",
-    "inspect_git_status",
-    "run_shell",
     "create_architect_tools",
+    "inspect_file",
+    "inspect_git_status",
+    "preview_write_file",
+    "run_shell",
+    "write_file",
 ]
 
 
@@ -90,7 +88,7 @@ def inspect_git_status() -> str:
     return dispatch_tool("inspect_git_status", {})
 
 
-def run_shell(command: str, timeout: Optional[int] = 30) -> str:
+def run_shell(command: str, timeout: int | None = 30) -> str:
     """Execute a shell command in the workspace after policy approval.
 
     Args:

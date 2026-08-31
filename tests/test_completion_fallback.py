@@ -1,7 +1,6 @@
 """Tests for the model fallback logic in _completion."""
-import pytest
-
 import litellm.exceptions as litellm_errors
+import pytest
 
 from wrapper.cli import _completion
 
@@ -63,7 +62,7 @@ def _make_svc_unavailable_error():
     )
 
 
-from unittest.mock import patch, MagicMock
+from unittest.mock import MagicMock, patch
 
 
 class TestCompletionFallback:

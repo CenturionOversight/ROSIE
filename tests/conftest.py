@@ -1,9 +1,9 @@
 """Shared pytest fixtures for the wrapper test suite."""
-import pytest
-from pathlib import Path
 
-from wrapper.tools import set_workspace_root, set_policy
+import pytest
+
 from wrapper.policy import ApprovalPolicy, ExecutionPolicy
+from wrapper.tools import set_policy, set_workspace_root
 
 
 @pytest.fixture(autouse=True)

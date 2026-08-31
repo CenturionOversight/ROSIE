@@ -20,21 +20,20 @@ from __future__ import annotations
 import asyncio
 import os
 from pathlib import Path
-from typing import Optional
 
 from google.adk import Runner
 from google.adk.agents import LlmAgent
-from google.adk.sessions import InMemorySessionService
 from google.adk.artifacts import InMemoryArtifactService
-from google.genai import types
+from google.adk.sessions import InMemorySessionService
 from google.genai import client as genai_client_mod
+from google.genai import types
 
 from hackass.bridge import create_architect_tools
-from hackass.config import get_model_name, VERTEXAI_PROJECT, VERTEXAI_LOCATION
-from wrapper.tools import set_workspace_root, set_policy
-from wrapper.policy import ApprovalPolicy, ExecutionPolicy
+from hackass.config import VERTEXAI_LOCATION, VERTEXAI_PROJECT, get_model_name
+from wrapper.policy import ApprovalPolicy
+from wrapper.tools import set_policy, set_workspace_root
 
-__all__ = ["run_hackass", "create_agent"]
+__all__ = ["create_agent", "run_hackass"]
 
 
 INSTRUCTION = """You are ROSIE (HACKASS edition), a coding agent that can inspect files,
@@ -67,7 +66,7 @@ def _create_gemini_llm(model_name: str):
 
 def create_agent(
     workspace: str | Path,
-    model_name: Optional[str] = None,
+    model_name: str | None = None,
     yolo: bool = True,
 ) -> LlmAgent:
     """Create an ADK LlmAgent wired to the ARCHESTRATOR tool bridge.
@@ -106,9 +105,9 @@ def create_agent(
 def run_hackass(
     workspace: str | Path,
     prompt: str,
-    model_name: Optional[str] = None,
+    model_name: str | None = None,
     yolo: bool = True,
-    api_key: Optional[str] = None,
+    api_key: str | None = None,
 ) -> str:
     """Execute a prompt through the HACKASS Google ADK + Gemini path.
 

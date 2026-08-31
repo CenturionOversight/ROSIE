@@ -18,12 +18,13 @@ import logging
 import os
 import urllib.error
 import urllib.request
+from collections.abc import Iterable
 from datetime import UTC, datetime
-from typing import Any, Iterable
+from typing import Any
 
 from peep.events import PeepEvent
 
-__all__ = ["RatterSink", "map_peep_to_ratter_event", "DEFAULT_RATTER_URL"]
+__all__ = ["DEFAULT_RATTER_URL", "RatterSink", "map_peep_to_ratter_event"]
 
 logger = logging.getLogger(__name__)
 
@@ -54,9 +55,9 @@ def _peep_event_severity(event_type: str) -> str:
     """Map a PEEP event_type to a RATTER severity."""
     if event_type.startswith("output"):
         return "info"
-    if event_type.startswith("execution.error") or event_type.startswith("execution.interrupted"):
+    if event_type.startswith(("execution.error", "execution.interrupted")):
         return "error"
-    if event_type.startswith("execution.warning") or event_type.startswith("peep.event_dropped"):
+    if event_type.startswith(("execution.warning", "peep.event_dropped")):
         return "warning"
     if event_type.startswith("peep.adapter_failed"):
         return "critical"

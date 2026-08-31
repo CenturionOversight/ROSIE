@@ -1,12 +1,10 @@
 """End-to-end tests for the agent loop with mocked LiteLLM calls."""
 import json
-from unittest.mock import patch, MagicMock
-
-import pytest
+from unittest.mock import MagicMock, patch
 
 import litellm.exceptions as litellm_errors
 
-from wrapper.cli import _resolve_tool_calls, _build_parser, main
+from wrapper.cli import _resolve_tool_calls
 
 
 def _make_message(content=None, tool_calls=None):
@@ -92,10 +90,6 @@ class TestResolveToolCalls:
             )
 
         assert result == "Both done!"
-        tool_msgs = [m for m in messages if m.get("role") == "tool"]
-        assert len(tool_msgs) == 2
-
-    def test_max_iterations_reached(self, tmp_workspace, yolo_policy):
         tool_msgs = [m for m in messages if m.get("role") == "tool"]
         assert len(tool_msgs) == 2
 
