@@ -122,11 +122,13 @@ class PeepShellExecutor:
             if self._ratter_sink is None or not events:
                 return
             nonlocal command_id_for_ratter
-            for e in events:
-                if e.event_type == COMMAND_OBSERVED or (e.event_type == COMMAND_COMPLETED
-                      and command_id_for_ratter is None):
-                    command_id_for_ratter = e.payload.get("command_id")
             try:
+                for e in events:
+                    if e.event_type == COMMAND_OBSERVED or (
+                        e.event_type == COMMAND_COMPLETED
+                        and command_id_for_ratter is None
+                    ):
+                        command_id_for_ratter = e.payload.get("command_id")
                 self._ratter_sink.send_peep_events(
                     events,
                     command_id=command_id_for_ratter,
