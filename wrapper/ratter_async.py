@@ -181,12 +181,12 @@ class AsyncRatterSink:
         fails, so the worker can never observe negative outstanding state.
         """
         batch = list(events)
-        if not batch:
-            return True
 
         with self._drain_cond:
             if self._closed:
                 return False
+            if not batch:
+                return True
 
             self._outstanding += 1
             try:
