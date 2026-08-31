@@ -32,7 +32,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "-m", "--model",
         default=None,
-        help="Gemini model override (default: gemini-3.5-flash).",
+        help="Gemini model override (default: gemini-3.7-flash).",
     )
     parser.add_argument(
         "--ask",

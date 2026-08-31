@@ -302,10 +302,10 @@ The adapter functions in `hackass/bridge.py` delegate to the existing `wrapper.t
 
 | Field | Value |
 |-------|-------|
-| Model | `gemini-3.5-flash` |
+| Model | `gemini-3.7-flash` |
 | Provider | Vertex AI API (`aiplatform.googleapis.com`) |
 | Project | `rosie-fire` |
-| Region | `asia-northeast1` (gemini-3.5-flash not available in us-central1) |
+| Region | `global` |
 | Auth | Application Default Credentials (ADC) |
 
 ### Verified execution
@@ -313,7 +313,7 @@ The adapter functions in `hackass/bridge.py` delegate to the existing `wrapper.t
 Real execution has been verified both locally and end-to-end through the HTTP boundary:
 
 **Local CLI execution:**
-1. ADK `LlmAgent` created with `gemini-3.5-flash` model;
+1. ADK `LlmAgent` created with `gemini-3.7-flash` model;
 2. Agent requested `inspect_file(relative_path="README.md")`;
 3. Bridge adapter called `wrapper.tools.dispatch_tool("inspect_file", ...)`;
 4. ARCHESTRATOR read the file and returned content;

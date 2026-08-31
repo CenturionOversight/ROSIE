@@ -46,9 +46,9 @@ Browser
 
 ## Google technology
 
-- **Gemini 3.5+** — `gemini-3.5-flash` via Vertex AI (`hackass/config.py`)
+- **Gemini 3.5+** — `gemini-3.7-flash` via Vertex AI (`hackass/config.py`)
 - **Google ADK** — version 2.8.0 (`hackass/agent.py`)
-- **Vertex AI** — model execution in `asia-northeast1`
+- **Vertex AI** — model execution in `global`
 - **Cloud Run** — containerized HTTP service `rosie-api` in `us-central1`
 - **Firebase Hosting** — static frontend and proxy for `/health` and `/execute`
 - **Artifact Registry** — container image storage
@@ -96,7 +96,7 @@ See `docs/HACKATHON.md` for the detailed provenance record.
 
 ### Gemini regional availability
 
-`gemini-3.5-flash` is configured through Vertex AI in `asia-northeast1`; the Cloud Run service remains in `us-central1`. Keeping model configuration isolated from the portable execution layer allowed those deployment regions to differ without moving the core application.
+`gemini-3.7-flash` is configured through Vertex AI in `global`; the Cloud Run service remains in `us-central1`. Keeping model configuration isolated from the portable execution layer allowed those deployment regions to differ without moving the core application.
 
 ### Bridging ADK into an existing execution layer
 

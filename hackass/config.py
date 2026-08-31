@@ -14,13 +14,13 @@ from __future__ import annotations
 import os
 
 #: The Gemini model used by HACKASS.
-#: Gemini 3.5+ via Vertex AI (satisfies the 2026 hackathon requirement).
-MODEL_NAME: str = "gemini-3.5-flash"
+#: Gemini 3.7 via Vertex AI in the global location (satisfies the 2026
+#: hackathon requirement of Gemini 3.5 or newer).
+MODEL_NAME: str = "gemini-3.7-flash"
 
 #: Vertex AI region used for Gemini access.
-#: Note: gemini-3.5-flash is available in asia-northeast1 (Vertex AI),
-#: not in us-central1. Cloud Run deployment remains in us-central1.
-VERTEXAI_LOCATION: str = "asia-northeast1"
+#: gemini-3.7-flash is served from the Vertex AI global location.
+VERTEXAI_LOCATION: str = "global"
 
 #: Google Cloud project for Vertex AI.
 VERTEXAI_PROJECT: str = "rosie-fire"
@@ -33,7 +33,7 @@ def get_model_name() -> str:
     """Return the Gemini model name, allowing an environment override.
 
     Returns:
-        The model identifier to pass to ADK (``gemini-3.5-flash``
+        The model identifier to pass to ADK (``gemini-3.7-flash``
         by default, or the value of ``HACKASS_GEMINI_MODEL`` if set).
     """
     return os.environ.get(_MODEL_ENV_VAR, MODEL_NAME)

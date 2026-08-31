@@ -48,7 +48,7 @@ These capabilities are disclosed as pre-existing work incorporated into HACKASS.
 The following work has been added during the hackathon:
 
 - Google ADK 2.8.0 integrated as the hackathon-specific execution framework (`hackass/agent.py`, `hackass/bridge.py`);
-- `gemini-3.5-flash` via Vertex AI on `rosie-fire`, `asia-northeast1` (`hackass/config.py`);
+- `gemini-3.7-flash` via Vertex AI on `rosie-fire`, `global` (`hackass/config.py`);
 - ADK ↔ ARCHESTRATOR tool bridge delegating to `wrapper.tools.dispatch_tool()` (`hackass/bridge.py`);
 - tests covering the Google integration (`tests/test_hackass_integration.py`) and HTTP boundary (`tests/test_server_execute.py`);
 - `server.py` — portable Python HTTP boundary with `POST /execute` endpoint;
@@ -62,7 +62,7 @@ The following work has been added during the hackathon:
 
 The official 2026 rules require every submission to use:
 
-1. Gemini 3.5 or newer through the Gemini API or Vertex AI — **implemented** (`gemini-3.5-flash` via Vertex AI on `rosie-fire`);
+1. Gemini 3.5 or newer through the Gemini API or Vertex AI — **implemented** (`gemini-3.7-flash` via Vertex AI on `rosie-fire`);
 2. at least one Google Agent Framework — **implemented** (Google ADK 2.8.0);
 3. at least one Google Cloud infrastructure service — **implemented** (Cloud Run, Firebase Hosting, Artifact Registry).
 
@@ -88,7 +88,7 @@ Browser
 
 Real execution has been verified both locally and through the live deployed service:
 
-1. ADK `LlmAgent` created with `gemini-3.5-flash` via Vertex AI;
+1. ADK `LlmAgent` created with `gemini-3.7-flash` via Vertex AI;
 2. the agent requested real ARCHESTRATOR tools;
 3. the bridge delegated requests to `wrapper.tools.dispatch_tool()`;
 4. ARCHESTRATOR performed real workspace actions;
@@ -115,7 +115,7 @@ For a private repository, the rules require repository access for the hackathon 
 ## Currently implemented
 
 - Google ADK 2.8.0 integrated as the hackathon-specific execution framework;
-- Gemini 3.5+ (`gemini-3.5-flash`) configured via Vertex AI on `rosie-fire`;
+- Gemini 3.5+ (`gemini-3.7-flash`) configured via Vertex AI on `rosie-fire`;
 - five ARCHESTRATOR tools bridged to ADK without duplicating their logic;
 - `POST /execute` HTTP endpoint in `server.py` calling `run_hackass()`;
 - Firebase Hosting `/execute` route forwarding to Cloud Run;
@@ -141,7 +141,7 @@ Before the deadline (Aug 31, 2026, 5:00pm PT):
 - [x] HACKASS clearly identified as the newly created hackathon project;
 - [x] ARCHESTRATOR clearly disclosed as pre-existing incorporated software;
 - [x] hackathon-created work distinguished from the incorporated ARCHESTRATOR foundation;
-- [x] Gemini path implemented (`gemini-3.5-flash` via Vertex AI);
+- [x] Gemini path implemented (`gemini-3.7-flash` via Vertex AI);
 - [x] Google ADK genuinely in the execution path (2.8.0);
 - [x] Google Cloud infrastructure genuinely used;
 - [x] architecture documentation matches the implemented path;

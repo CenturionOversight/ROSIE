@@ -19,7 +19,7 @@ class TestHackassImports:
 
     def test_hackass_package_imports(self):
         from hackass import MODEL_NAME, create_architect_tools, run_hackass
-        assert MODEL_NAME == "gemini-3.5-flash"
+        assert MODEL_NAME == "gemini-3.7-flash"
 
     def test_bridge_module_imports(self):
         from hackass.bridge import (
@@ -38,9 +38,9 @@ class TestHackassImports:
             VERTEXAI_PROJECT,
             get_model_name,
         )
-        assert MODEL_NAME == "gemini-3.5-flash"
+        assert MODEL_NAME == "gemini-3.7-flash"
         assert VERTEXAI_PROJECT == "rosie-fire"
-        assert VERTEXAI_LOCATION == "asia-northeast1"
+        assert VERTEXAI_LOCATION == "global"
 
     def test_agent_module_imports(self):
         from hackass.agent import INSTRUCTION, create_agent, run_hackass
@@ -64,7 +64,7 @@ class TestModelConfiguration:
 
         monkeypatch.delenv("HACKASS_GEMINI_MODEL")
         importlib.reload(config)
-        assert config.get_model_name() == "gemini-3.5-flash"
+        assert config.get_model_name() == "gemini-3.7-flash"
 
     def test_vertexai_project_is_rosie_fire(self):
         from hackass.config import VERTEXAI_PROJECT
@@ -72,7 +72,7 @@ class TestModelConfiguration:
 
     def test_vertexai_location_set(self):
         from hackass.config import VERTEXAI_LOCATION
-        assert VERTEXAI_LOCATION in ["us-central1", "us-east1", "asia-northeast1", "europe-west1"]
+        assert VERTEXAI_LOCATION in ["us-central1", "us-east1", "global", "europe-west1"]
 
 
 class TestToolRegistration:

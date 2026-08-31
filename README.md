@@ -274,7 +274,7 @@ Browser/CLI → `server.py` → `hackass.run_hackass()` → Google ADK → Gemin
 | Cloud Run | `rosie-fire` / `us-central1` | Container host for `server.py` |
 | Firebase Hosting | `rosie-fire` | Static frontend + `/health` + `/execute` proxy |
 | Artifact Registry | `rosie-fire` | Container image registry |
-| Vertex AI | `rosie-fire` / `asia-northeast1` | Gemini 3.5+ model access |
+| Vertex AI | `rosie-fire` / `global` | Gemini 3.5+ model access |
 
 ### Pre-existing code disclosure
 
