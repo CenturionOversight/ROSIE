@@ -79,6 +79,11 @@ def box_output(
     if len(text) <= max_chars:
         return text
 
+    # Extremely small budgets cannot represent head + marker + tail. Preserve
+    # deterministic prefix semantics instead of returning a tail character.
+    if max_chars < 3:
+        return text[:max_chars]
+
     marker = _build_marker(len(text), max_chars)
 
     # Available space for head + tail after reserving marker + separating
@@ -94,10 +99,12 @@ def box_output(
 
     head_len = int(avail * 0.6)
     tail_len = avail - head_len
+    if head_len < 1:
+        head_len = 1
+        tail_len = max(0, avail - 1)
     if tail_len < 1:
         tail_len = 1
-        head_len = avail - 1
-        head_len = max(head_len, 1)
+        head_len = max(1, avail - 1)
 
     head = text[:head_len]
     tail = text[-tail_len:]
