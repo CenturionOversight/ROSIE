@@ -73,8 +73,8 @@ def box_output(
     Returns:
         The bounded payload, or *text* unchanged when it already fits.
     """
-    if max_chars <= 0:
-        max_chars = DEFAULT_MAX_OUTPUT_CHARS
+    if max_chars < 1:
+        max_chars = 1
 
     if len(text) <= max_chars:
         return text
@@ -89,7 +89,7 @@ def box_output(
         avail -= 2  # newlines around the marker
 
     if avail <= 0:
-        # Marker alone fills the budget — return whatever fits.
+        # Marker alone fills the budget - return whatever fits.
         return text[:max_chars]
 
     head_len = int(avail * 0.6)
@@ -187,18 +187,17 @@ def format_shell_result(
     inferred from the numeric exit code alone.
 
     *max_chars* is a **total** budget: the complete returned block never
-    exceeds it (apart from an unavoidable tiny tolerance only in the
-    pathological case where the structural text alone is larger than
-    *max_chars*).  The payload budget left after reserving the structural text
-    is shared between stdout and stderr with a guaranteed minimum share for
-    each non-empty stream; oversized payloads are truncated head-and-tail with
-    an explicit marker reporting their original size.  Every structural field
-    always survives.
+    exceeds it.  For positive budgets too small to contain the full structural
+    block, the result is clipped to the requested size.  The payload budget
+    left after reserving the structural text is shared between stdout and
+    stderr with a guaranteed minimum share for each non-empty stream;
+    oversized payloads are truncated head-and-tail with an explicit marker
+    reporting their original size.
     """
-    if max_chars <= 0:
-        max_chars = DEFAULT_MAX_OUTPUT_CHARS
+    if max_chars < 1:
+        max_chars = 1
 
-    code = exit_code if exit_code is not None else -1
+    code = -1 if timed_out else (exit_code if exit_code is not None else -1)
 
     timeout_line = ""
     if timed_out:
@@ -233,16 +232,11 @@ def format_shell_result(
             prefix, stdout, stdout_nonempty, middle, stderr, stderr_nonempty, suffix
         )
 
-    # Need to truncate.  The structural text must survive, so the payload
-    # budget is what is left after reserving it.
+    # Need to truncate.  The structural text must survive when it fits, so the
+    # payload budget is what is left after reserving it.
     available = max_chars - fixed
 
     if available <= 0:
-        # Pathological: the structural text alone exceeds the budget.  Return
-        # the smallest possible representation (empty payloads) rather than
-        # dropping the structural fields, but clip hard to the budget so the
-        # returned block never exceeds *max_chars* even for tiny positive
-        # budgets.
         result = _assemble(prefix, "", False, middle, "", False, suffix)
         if len(result) > max_chars:
             result = result[:max_chars]
