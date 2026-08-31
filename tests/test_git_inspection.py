@@ -71,8 +71,8 @@ class TestInspectGitDiff:
         proc = _Proc(0, stdout="x" * 100)
         with patch("wrapper.tools.subprocess.run", return_value=proc):
             result = inspect_git_diff(max_chars=50)
-        assert "truncated at 50 characters" in result
-        assert len(result.split("\n")[0]) == 50
+        assert len(result) <= 50
+        assert "truncated" in result.lower()
 
     def test_git_error_surfaced(self, workspace):
         proc = _Proc(1, stderr="fatal: not a git repository")
@@ -121,3 +121,52 @@ class TestInspectGitLog:
         with patch("wrapper.tools.subprocess.run", return_value=proc):
             result = inspect_git_log()
         assert "No commits" in result
+
+
+# ------------------------------------------------------------------
+# TARGET 5 â€” Bounded git diff tests
+# ------------------------------------------------------------------
+
+class TestBoundedGitDiff:
+    def test_large_diff_bounded_by_max_chars(self, workspace):
+        proc = _Proc(0, stdout="x" * 5000)
+        with patch("wrapper.tools.subprocess.run", return_value=proc):
+            result = inspect_git_diff(max_chars=100)
+        assert len(result) <= 100
+
+    def test_marker_visible_when_space_permits(self, workspace):
+        proc = _Proc(0, stdout="x" * 5000)
+        with patch("wrapper.tools.subprocess.run", return_value=proc):
+            result = inspect_git_diff(max_chars=100)
+        assert "truncated at 100 characters" in result
+
+    def test_max_chars_1_no_overrun(self, workspace):
+        proc = _Proc(0, stdout="x" * 5000)
+        with patch("wrapper.tools.subprocess.run", return_value=proc):
+            result = inspect_git_diff(max_chars=1)
+        assert len(result) <= 1
+
+    def test_max_chars_2_no_overrun(self, workspace):
+        proc = _Proc(0, stdout="x" * 5000)
+        with patch("wrapper.tools.subprocess.run", return_value=proc):
+            result = inspect_git_diff(max_chars=2)
+        assert len(result) <= 2
+
+    def test_max_chars_5_no_overrun(self, workspace):
+        proc = _Proc(0, stdout="x" * 5000)
+        with patch("wrapper.tools.subprocess.run", return_value=proc):
+            result = inspect_git_diff(max_chars=5)
+        assert len(result) <= 5
+
+    def test_small_diff_unchanged(self, workspace):
+        small_diff = "diff --git a/f.txt b/f.txt\n"
+        proc = _Proc(0, stdout=small_diff)
+        with patch("wrapper.tools.subprocess.run", return_value=proc):
+            result = inspect_git_diff(max_chars=20000)
+        assert result == small_diff
+
+    def test_clean_workspace_message(self, workspace):
+        proc = _Proc(0, stdout="")
+        with patch("wrapper.tools.subprocess.run", return_value=proc):
+            result = inspect_git_diff()
+        assert "No changes" in result

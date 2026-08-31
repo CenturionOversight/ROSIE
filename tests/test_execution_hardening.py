@@ -739,3 +739,161 @@ class TestCliConfigureOnce:
         assert "peep=unavailable" in status
         assert cli._peep_executor is None
         cli._close_peep_executor()
+
+
+# ------------------------------------------------------------------
+# TARGET 3 â€” Small output budget tests
+# ------------------------------------------------------------------
+
+class TestSmallOutputBudget:
+    """box_output and format_shell_result must respect len(result) <= max_chars
+    for arbitrarily small positive budgets."""
+
+    def test_box_output_max_chars_1(self):
+        from wrapper.output_bounds import box_output
+        result = box_output("hello world", max_chars=1)
+        assert len(result) <= 1
+
+    def test_box_output_max_chars_2(self):
+        from wrapper.output_bounds import box_output
+        result = box_output("hello world", max_chars=2)
+        assert len(result) <= 2
+
+    def test_box_output_max_chars_5(self):
+        from wrapper.output_bounds import box_output
+        result = box_output("hello world", max_chars=5)
+        assert len(result) <= 5
+
+    def test_box_output_smaller_than_full_marker(self):
+        from wrapper.output_bounds import box_output
+        result = box_output("x" * 200, max_chars=20)
+        assert len(result) <= 20
+
+    def test_box_output_at_marker_boundary(self):
+        from wrapper.output_bounds import box_output
+        marker = "...(output truncated; original 200 chars; showing head and tail)..."
+        result = box_output("x" * 200, max_chars=len(marker))
+        assert len(result) <= len(marker)
+
+    def test_box_output_never_inflates_budget(self):
+        from wrapper.output_bounds import box_output
+        for n in [1, 2, 3, 5, 10, 20]:
+            result = box_output("hello world", max_chars=n)
+            assert len(result) <= n, f"max_chars={n} got len={len(result)}"
+
+    def test_format_shell_small_stdout_only(self):
+        from wrapper.output_bounds import format_shell_result
+        result = format_shell_result("c", stdout="A" * 500, stderr="", exit_code=0, max_chars=80)
+        assert len(result) <= 80
+
+    def test_format_shell_small_stderr_only(self):
+        from wrapper.output_bounds import format_shell_result
+        result = format_shell_result("c", stdout="", stderr="B" * 500, exit_code=0, max_chars=80)
+        assert len(result) <= 80
+
+    def test_format_shell_small_both_streams(self):
+        from wrapper.output_bounds import format_shell_result
+        result = format_shell_result("c", stdout="A" * 500, stderr="B" * 500, exit_code=0, max_chars=80)
+        assert len(result) <= 80
+
+    def test_format_shell_small_timeout(self):
+        from wrapper.output_bounds import format_shell_result
+        result = format_shell_result("c", stdout="A" * 500, stderr="", exit_code=-1,
+                                     timed_out=True, timeout_seconds=30, max_chars=120)
+        assert len(result) <= 120
+
+    def test_format_shell_normal_50k(self):
+        from wrapper.output_bounds import format_shell_result
+        result = format_shell_result("c", stdout="A" * 100_000, exit_code=0)
+        assert len(result) <= 50_000
+
+    def test_allocate_budget_never_exceeds_available(self):
+        from wrapper.output_bounds import _allocate_payload_budget
+        for avail in [1, 2, 3, 5, 10, 100]:
+            out, err = _allocate_payload_budget(avail, 500, 500)
+            assert out + err <= avail, f"available={avail} got {out}+{err}={out+err}"
+
+    def test_allocate_single_char_both_streams(self):
+        from wrapper.output_bounds import _allocate_payload_budget
+        out, err = _allocate_payload_budget(1, 500, 500)
+        assert out + err <= 1
+
+
+# ------------------------------------------------------------------
+# TARGET 4 â€” move_path guard tests
+# ------------------------------------------------------------------
+
+class TestMovePathGuards:
+    def test_move_workspace_root_rejected(self, tmp_path, yolo):
+        from wrapper.tools import move_path, set_workspace_root
+        set_workspace_root(tmp_path)
+        result = move_path(".", "somewhere_else")
+        assert "ERROR" in result
+        assert "workspace root" in result.lower()
+
+    def test_workspace_unchanged_after_rejected_root_move(self, tmp_path, yolo):
+        from wrapper.tools import move_path, set_workspace_root
+        set_workspace_root(tmp_path)
+        (tmp_path / "file.txt").write_text("content")
+        move_path(".", "somewhere_else")
+        assert (tmp_path / "file.txt").exists()
+
+    def test_move_dir_into_direct_child_rejected(self, tmp_path, yolo):
+        from wrapper.tools import move_path, set_workspace_root
+        set_workspace_root(tmp_path)
+        (tmp_path / "foo").mkdir()
+        (tmp_path / "foo" / "bar").mkdir()
+        result = move_path("foo", "foo/bar/baz")
+        assert "ERROR" in result
+        assert "descendant" in result.lower()
+
+    def test_move_dir_into_deeper_descendant_rejected(self, tmp_path, yolo):
+        from wrapper.tools import move_path, set_workspace_root
+        set_workspace_root(tmp_path)
+        (tmp_path / "foo").mkdir()
+        (tmp_path / "foo" / "bar" / "baz").mkdir(parents=True)
+        result = move_path("foo", "foo/bar/baz/qux")
+        assert "ERROR" in result
+        assert "descendant" in result.lower()
+
+    def test_no_approval_request_for_invalid_move(self, tmp_path, yolo, monkeypatch):
+        from wrapper.tools import move_path, set_workspace_root
+        set_workspace_root(tmp_path)
+        (tmp_path / "foo").mkdir()
+        called = []
+        monkeypatch.setattr(yolo, "request_approval", lambda *a, **kw: (called.append(True) or True))
+        move_path(".", "somewhere")
+        assert called == [], "approval should not be requested for invalid move"
+
+    def test_valid_sibling_dir_move(self, tmp_path, yolo):
+        from wrapper.tools import move_path, set_workspace_root
+        set_workspace_root(tmp_path)
+        (tmp_path / "dir_a").mkdir()
+        (tmp_path / "dir_a" / "f.txt").write_text("hi")
+        result = move_path("dir_a", "dir_b")
+        assert "Successfully" in result
+        assert (tmp_path / "dir_b" / "f.txt").exists()
+
+    def test_valid_file_move(self, tmp_path, yolo):
+        from wrapper.tools import move_path, set_workspace_root
+        set_workspace_root(tmp_path)
+        (tmp_path / "a.txt").write_text("data")
+        result = move_path("a.txt", "b.txt")
+        assert "Successfully" in result
+        assert (tmp_path / "b.txt").read_text() == "data"
+
+    def test_destination_exists_unchanged(self, tmp_path, yolo):
+        from wrapper.tools import move_path, set_workspace_root
+        set_workspace_root(tmp_path)
+        (tmp_path / "a.txt").write_text("a")
+        (tmp_path / "b.txt").write_text("b")
+        result = move_path("a.txt", "b.txt")
+        assert "ERROR" in result
+        assert "already exists" in result.lower()
+        assert (tmp_path / "a.txt").read_text() == "a"
+
+    def test_traversal_outside_workspace_blocked(self, tmp_path, yolo):
+        from wrapper.tools import move_path, set_workspace_root
+        set_workspace_root(tmp_path)
+        with pytest.raises(Exception):
+            move_path("../../etc/passwd", "stolen.txt")

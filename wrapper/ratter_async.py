@@ -89,11 +89,6 @@ class AsyncRatterSink:
     # Internal drain accounting
     # ------------------------------------------------------------------
 
-    def _note_accepted(self) -> None:
-        """Record one accepted (unprocessed) item under the drain condition."""
-        with self._drain_cond:
-            self._outstanding += 1
-
     def _note_processed(self) -> None:
         """Record one fully-processed item and wake any flusher."""
         with self._drain_cond:
@@ -174,22 +169,30 @@ class AsyncRatterSink:
         Non-blocking.  Returns ``True`` if the events were accepted onto the
         queue, ``False`` if the sink is closed or the queue is full and the
         events were dropped.
-        """
-        if self._closed:
-            return False
 
+        Outstanding accounting is atomic with respect to enqueue: the counter
+        is incremented *before* the queue put, and rolled back if the put
+        fails, so the worker can never observe negative outstanding state.
+        """
         batch = list(events)
         if not batch:
             return True
 
-        try:
-            self._queue.put_nowait((batch, command_id, task_id))
-        except queue.Full:
-            logger.warning(
-                "RATTER async queue full; dropping %d PEEP events", len(batch)
-            )
-            return False
-        self._note_accepted()
+        with self._drain_cond:
+            if self._closed:
+                return False
+
+            self._outstanding += 1
+            try:
+                self._queue.put_nowait((batch, command_id, task_id))
+            except queue.Full:
+                self._outstanding -= 1
+                self._drain_cond.notify_all()
+                logger.warning(
+                    "RATTER async queue full; dropping %d PEEP events", len(batch)
+                )
+                return False
+
         return True
 
     def flush(self, timeout: float = _WORKER_JOIN_TIMEOUT_SECONDS) -> bool:
@@ -216,11 +219,10 @@ class AsyncRatterSink:
     def close(self, timeout: float = _WORKER_JOIN_TIMEOUT_SECONDS) -> bool:
         """Stop the worker after a bounded, graceful shutdown.
 
-        Sequence:
-        1. stop accepting new telemetry (subsequent ``send_peep_events`` → False);
-        2. best-effort flush of pending events within *timeout*;
-        3. signal the worker to exit with a sentinel;
-        4. join the worker for the remaining bounded time.
+        Uses a single monotonic deadline for the entire shutdown sequence:
+        stop accepting, flush pending work, signal worker, join worker.
+        All stages share one time budget so the total wall time is bounded
+        by *timeout* (plus a negligible scheduling overhead), never ~2x.
 
         Never blocks indefinitely and never raises.  Idempotent: repeated
         calls are safe and return the same drained status.
@@ -230,21 +232,28 @@ class AsyncRatterSink:
             ``False`` if some pending events could not be sent (these are
             logged explicitly).
         """
+        deadline = time.monotonic() + max(0, timeout)
+
         if self._closed:
             return self._outstanding == 0
 
         with self._lock:
             self._closed = True
 
-        drained = self.flush(timeout=timeout)
+        # Best-effort flush with remaining time.
+        remaining = max(0, deadline - time.monotonic())
+        drained = self.flush(timeout=remaining)
 
+        # Signal worker shutdown.
         try:
             self._queue.put_nowait(_SENTINEL)
         except queue.Full:  # pragma: no cover - defensive
             pass
 
+        # Join worker with remaining time.
         if self._worker is not None and self._worker.is_alive():
-            self._worker.join(timeout=timeout)
+            remaining = max(0, deadline - time.monotonic())
+            self._worker.join(timeout=remaining)
 
         pending = self._queue.qsize()
         if self._outstanding > 0 or pending > 0:

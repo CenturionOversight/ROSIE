@@ -202,3 +202,127 @@ class TestClose:
         # Even though the send fails, close must not raise.
         sink.close(timeout=2.0)
         sink.close(timeout=2.0)
+
+
+# ------------------------------------------------------------------
+# TARGET 1 — Accounting race tests
+# ------------------------------------------------------------------
+
+class TestAccountingRace:
+    """Verify that _outstanding never goes negative and queue-full/closed
+    rejections do not corrupt the accounting invariant."""
+
+    def test_outstanding_never_negative_during_processing(self):
+        gate = threading.Event()
+        sink = AsyncRatterSink(sink=_BlockingSink(gate), auto_start=True)
+        try:
+            sink.send_peep_events([_fake_event()])
+            assert sink._outstanding == 1
+            gate.set()
+            sink.flush(timeout=2.0)
+            assert sink._outstanding == 0
+        finally:
+            sink.close(timeout=2.0)
+
+    def test_queue_full_rolls_back_outstanding(self):
+        tiny = AsyncRatterSink(
+            sink=_BlockingSink(threading.Event()),
+            queue_size=1,
+            auto_start=True,
+        )
+        try:
+            gate = tiny._sink.gate
+            # Fill the queue with one blocked item.
+            tiny.send_peep_events([_fake_event()])
+            assert tiny._outstanding == 1
+            # Second enqueue should fail (queue full) and roll back.
+            result = tiny.send_peep_events([_fake_event()])
+            assert result is False
+            assert tiny._outstanding == 1  # still 1, not 2 or 0
+        finally:
+            gate.set()
+            tiny.close(timeout=2.0)
+
+    def test_closed_sink_rejection_does_not_change_outstanding(self):
+        sink = AsyncRatterSink(auto_start=False)
+        sink._closed = True
+        result = sink.send_peep_events([_fake_event()])
+        assert result is False
+        assert sink._outstanding == 0
+
+    def test_flush_not_true_while_blocked(self):
+        gate = threading.Event()
+        sink = AsyncRatterSink(sink=_BlockingSink(gate), auto_start=True)
+        try:
+            sink.send_peep_events([_fake_event()])
+            sink._sink.started.wait(2.0)
+            assert sink.flush(timeout=0.2) is False
+        finally:
+            gate.set()
+            sink.close(timeout=2.0)
+
+    def test_flush_true_after_blocked_work_released(self):
+        gate = threading.Event()
+        sink = AsyncRatterSink(sink=_BlockingSink(gate), auto_start=True)
+        try:
+            sink.send_peep_events([_fake_event()])
+            sink._sink.started.wait(2.0)
+            gate.set()
+            assert sink.flush(timeout=2.0) is True
+            assert sink._outstanding == 0
+        finally:
+            sink.close(timeout=2.0)
+
+    def test_high_speed_handoff_no_corruption(self):
+        sink = AsyncRatterSink(auto_start=True)
+        try:
+            for _ in range(200):
+                sink.send_peep_events([_fake_event()])
+            assert sink.flush(timeout=5.0) is True
+            assert sink._outstanding == 0
+        finally:
+            sink.close(timeout=2.0)
+
+
+# ------------------------------------------------------------------
+# TARGET 2 — One-deadline close tests
+# ------------------------------------------------------------------
+
+class TestOneDeadlineClose:
+    def test_close_bounded_near_requested_timeout(self):
+        gate = threading.Event()
+        sink = AsyncRatterSink(sink=_BlockingSink(gate), auto_start=True)
+        try:
+            sink.send_peep_events([_fake_event()])
+            sink._sink.started.wait(2.0)
+            start = time.monotonic()
+            sink.close(timeout=0.2)
+            elapsed = time.monotonic() - start
+            assert elapsed < 0.6, f"close took {elapsed:.3f}s, expected < 0.6s"
+        finally:
+            gate.set()
+
+    def test_close_drains_when_work_fits_in_deadline(self):
+        sink = AsyncRatterSink(sink=_ImmediateSink(), auto_start=True)
+        sink.send_peep_events([_fake_event()])
+        drained = sink.close(timeout=2.0)
+        assert drained is True
+
+    def test_repeated_close_safe(self):
+        sink = AsyncRatterSink(auto_start=True)
+        sink.send_peep_events([_fake_event()])
+        sink.close(timeout=2.0)
+        sink.close(timeout=2.0)
+        sink.close(timeout=2.0)
+
+    def test_worker_shutdown_signaled(self):
+        sink = AsyncRatterSink(auto_start=True)
+        sink.send_peep_events([_fake_event()])
+        sink.close(timeout=2.0)
+        assert sink._worker is not None
+        assert not sink._worker.is_alive()
+
+    def test_close_never_raises_with_failing_sink(self):
+        sink = AsyncRatterSink(sink=_RaisingSink(), auto_start=True)
+        sink.send_peep_events([_fake_event()])
+        sink.close(timeout=2.0)

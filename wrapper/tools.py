@@ -1,8 +1,8 @@
 """Local execution handlers and OpenAI-format tool schemas.
 
-Defines twelve core tools — list_directory, search_workspace, inspect_file,
+Defines twelve core tools Ã¢â‚¬â€ list_directory, search_workspace, inspect_file,
 preview_write_file, write_file, apply_patch, move_path, delete_path,
-inspect_git_status, inspect_git_diff, inspect_git_log, and run_shell — backed
+inspect_git_status, inspect_git_diff, inspect_git_log, and run_shell Ã¢â‚¬â€ backed
 by :mod:`pathlib`, :mod:`subprocess`, :mod:`difflib`, :mod:`shutil`, and
 :mod:`re`.
 
@@ -15,7 +15,7 @@ returned by the model before they are forwarded to the underlying Python
 functions.
 
 Approval policies from :mod:`wrapper.policy` are honoured inside
-:func:`write_file`, :func:`apply_patch`, and :func:`run_shell` — file writes,
+:func:`write_file`, :func:`apply_patch`, and :func:`run_shell` Ã¢â‚¬â€ file writes,
 targeted patches, and shell commands are blocked until the user grants
 approval (or the policy auto-approves).
 """
@@ -348,7 +348,7 @@ class InspectGitLogArgs(BaseModel):
     model_config = {"extra": "forbid"}
 
 
-#: Mapping of tool name → pydantic model (or ``None`` for no-arg tools).
+#: Mapping of tool name Ã¢â€ â€™ pydantic model (or ``None`` for no-arg tools).
 TOOL_MODELS: dict[str, Optional[type[BaseModel]]] = {
     "list_directory": ListDirectoryArgs,
     "search_workspace": SearchWorkspaceArgs,
@@ -428,7 +428,7 @@ def search_workspace(
     notice is appended so a partial result is never silently presented as
     exhaustive.
 
-    A file whose PATH matches the query is still content-searched — a
+    A file whose PATH matches the query is still content-searched Ã¢â‚¬â€ a
     path-name hit does not suppress content hits from the same file.
 
     Args:
@@ -464,7 +464,7 @@ def search_workspace(
 
         rel = fpath.relative_to(root).as_posix()
 
-        # Path-name hit. Do NOT skip content search — a path match still
+        # Path-name hit. Do NOT skip content search Ã¢â‚¬â€ a path match still
         # allows the same file's text to contribute content hits.
         path_hit = query_lower in rel.lower()
         if path_hit:
@@ -607,7 +607,7 @@ def inspect_file(relative_path: str, start_line: int = 1, line_count: int = 100)
 def preview_write_file(relative_path: str, content: str) -> str:
     """Generates a unified diff between the current file and proposed content.
 
-    Does **not** modify disk — it is a read-only preview used to show
+    Does **not** modify disk Ã¢â‚¬â€ it is a read-only preview used to show
     the user what will change before :func:`write_file` commits.
 
     Args:
@@ -639,7 +639,7 @@ def preview_write_file(relative_path: str, content: str) -> str:
     )
     diff_text = "".join(diff_iter)
     if not diff_text:
-        return f"No changes — the proposed content is identical to the current file."
+        return f"No changes Ã¢â‚¬â€ the proposed content is identical to the current file."
     return diff_text
 
 
@@ -872,8 +872,18 @@ def inspect_git_diff(
         return "No changes to report."
 
     if len(output) > max_chars:
-        output = output[:max_chars]
-        output += f"\n...(diff truncated at {max_chars} characters; increase max_chars to see more)"
+        # Try the full marker first, then degrade to a minimal marker if it
+        # does not fit.  content_len must never go negative (Python negative
+        # slicing silently returns almost the full string).
+        marker = f"\n...(diff truncated at {max_chars} characters; increase max_chars to see more)"
+        content_len = max_chars - len(marker)
+        if content_len < 0:
+            marker = "...(truncated)..."
+            content_len = max_chars - len(marker)
+        if content_len < 0:
+            # Even the minimal marker exceeds the budget; no room for content.
+            return output[:max_chars]
+        output = output[:content_len] + marker
 
     return output
 
@@ -972,7 +982,7 @@ def move_path(source_path: str, destination_path: str) -> str:
 
     The source and destination are both resolved against the workspace root
     and traversal outside it is rejected.  The destination must not already
-    exist — this tool never overwrites an existing path.  The move is
+    exist Ã¢â‚¬â€ this tool never overwrites an existing path.  The move is
     performed with :func:`shutil.move` (no shell is involved).  It is a
     mutation and therefore gated by the same ``write`` approval policy as
     :func:`write_file`.
@@ -993,6 +1003,19 @@ def move_path(source_path: str, destination_path: str) -> str:
     root = get_workspace_root()
     src = _resolve_safe_path(root, source_path)
     dst = _resolve_safe_path(root, destination_path)
+
+    if src == root:
+        return "ERROR: Refusing to move the workspace root."
+
+    if src.is_dir():
+        try:
+            dst.relative_to(src)
+            return (
+                f"ERROR: Cannot move directory '{source_path}' into its own "
+                f"descendant '{destination_path}'."
+            )
+        except ValueError:
+            pass
 
     if not src.exists():
         return f"ERROR: Source path '{source_path}' does not exist."
@@ -1088,7 +1111,7 @@ def delete_path(relative_path: str, recursive: bool = False) -> str:
 # Tool registry, schemas, and dispatch
 # ---------------------------------------------------------------------------
 
-#: Mapping of tool name → executable Python function.
+#: Mapping of tool name Ã¢â€ â€™ executable Python function.
 TOOL_REGISTRY: dict[str, Any] = {
     "list_directory": list_directory,
     "search_workspace": search_workspace,
@@ -1145,7 +1168,7 @@ def dispatch_tool(name: str, args: dict[str, Any]) -> str:
         args: Raw argument dictionary from the model.
 
     Returns:
-        The tool's textual result, or an ``ERROR: …`` string.
+        The tool's textual result, or an ``ERROR: Ã¢â‚¬Â¦`` string.
     """
     if name not in TOOL_REGISTRY:
         return f"ERROR: Unknown tool '{name}'."

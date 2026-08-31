@@ -28,23 +28,30 @@ __all__ = [
 
 DEFAULT_MAX_OUTPUT_CHARS = 50_000
 TRUNCATION_MARKER = "...(output truncated; showing head and tail)..."
-_HEAD_RATIO = 0.6
-_TAIL_RATIO = 0.4
-# Guaranteed minimum share of the payload budget for a non-empty stream, so a
-# smaller stream is never starved out entirely by a larger one.
+_SHORT_MARKER = "...(truncated)..."
 _MIN_PAYLOAD_SHARE = 0.15
 _EMPTY_PLACEHOLDER = "(empty)"
 _PLACEHOLDER_LEN = len(_EMPTY_PLACEHOLDER)
 
 
-def _build_marker(original_len: int) -> str:
-    """Build the truncation marker, reporting the original payload length."""
+def _build_marker(original_len: int, budget: int) -> str:
+    """Build the truncation marker, fitting within *budget*.
+
+    When the full rich marker does not fit, a shorter deterministic marker is
+    used.  When even the short marker does not fit, an empty string is
+    returned so that strict length correctness is preserved.
+    """
     if original_len <= 0:
         return TRUNCATION_MARKER
-    return (
+    full = (
         f"...(output truncated; original {original_len} chars; "
         f"showing head and tail)..."
     )
+    if len(full) <= budget:
+        return full
+    if len(_SHORT_MARKER) <= budget:
+        return _SHORT_MARKER
+    return ""
 
 
 def box_output(
@@ -53,18 +60,15 @@ def box_output(
 ) -> str:
     """Bound *text* to at most *max_chars*, keeping head and tail.
 
-    When *text* is at or below *max_chars* it is returned unchanged.  When
-    it exceeds the bound, the head (``max_chars * _HEAD_RATIO``) and the
-    tail (``max_chars * _TAIL_RATIO``) are retained, separated by an
-    explicit truncation marker that reports the original size, so the reader
-    keeps both the beginning and the end of the output and is told that
-    something was dropped.  The returned string never exceeds *max_chars*.
+    The returned string **never** exceeds *max_chars*.  When the full rich
+    truncation marker cannot fit within the budget the marker is degraded
+    deterministically (shortened or omitted) rather than silently inflating
+    the budget.
 
     Args:
         text: The raw output payload (e.g. accumulated STDOUT or STDERR).
         max_chars: Upper bound on the returned length.  Must be positive; a
-            value below a small floor is clamped so a head and tail can both
-            be shown.
+            value below 1 is treated as 1.
 
     Returns:
         The bounded payload, or *text* unchanged when it already fits.
@@ -75,28 +79,32 @@ def box_output(
     if len(text) <= max_chars:
         return text
 
-    marker = _build_marker(len(text))
+    marker = _build_marker(len(text), max_chars)
 
-    # Reserve the marker plus the two newlines that surround it.
-    floor = len(marker) + 4
-    if max_chars < floor:
-        max_chars = floor
+    # Available space for head + tail after reserving marker + separating
+    # newlines.  The two newlines are mandatory only when both head and tail
+    # are present.
+    avail = max_chars - len(marker)
+    if marker:
+        avail -= 2  # newlines around the marker
 
-    avail = max_chars - 2 - len(marker)
-    head_len = int(avail * _HEAD_RATIO)
+    if avail <= 0:
+        # Marker alone fills the budget — return whatever fits.
+        return text[:max_chars]
+
+    head_len = int(avail * 0.6)
     tail_len = avail - head_len
     if tail_len < 1:
         tail_len = 1
-        head_len = avail - tail_len
+        head_len = avail - 1
         if head_len < 1:
             head_len = 1
-    tail_len = min(tail_len, avail - head_len)
-    if tail_len < 1:
-        tail_len = 1
 
     head = text[:head_len]
     tail = text[-tail_len:]
-    return f"{head}\n{marker}\n{tail}"
+    if marker:
+        return f"{head}\n{marker}\n{tail}"
+    return f"{head}{tail}"
 
 
 def _allocate_payload_budget(
@@ -106,17 +114,24 @@ def _allocate_payload_budget(
 ) -> tuple[int, int]:
     """Split *available* payload budget between stdout and stderr.
 
-    Allocation is proportional to stream size with a guaranteed minimum share
-    for each non-empty stream, so a smaller stream retains visible content and
-    stderr is never hidden by a much larger stdout.
+    Never allocates more than *available* in total.  Each non-empty stream
+    gets at least 1 character when available; when both streams are non-empty
+    but *available* < 2 the allocation is deterministic and does not exceed
+    the total.
     """
     if available <= 0:
-        return (1 if stdout_len > 0 else 0), (1 if stderr_len > 0 else 0)
+        return (0, 0)
 
     if stdout_len > 0 and stderr_len <= 0:
-        return available, 0
+        return (available, 0)
     if stderr_len > 0 and stdout_len <= 0:
-        return 0, available
+        return (0, available)
+
+    # Both streams non-empty.
+    if available < 2:
+        # Pathological: only 1 character of payload budget for two streams.
+        # Give it to stdout deterministically; total must not exceed available.
+        return (1, 0)
 
     min_share = max(1, int(available * _MIN_PAYLOAD_SHARE))
 
@@ -136,11 +151,9 @@ def _allocate_payload_budget(
             err_budget -= deficit
             out_budget += deficit
 
-    # Final safety: never go negative.
-    if out_budget < 1:
-        out_budget = 1
-    if err_budget < 1:
-        err_budget = 1
+    # Final safety: never go negative, never exceed available.
+    out_budget = max(0, min(out_budget, available))
+    err_budget = max(0, min(err_budget, available - out_budget))
     return out_budget, err_budget
 
 
@@ -228,8 +241,7 @@ def format_shell_result(
     if available <= 0:
         # Pathological: the structural text alone exceeds the budget.  Return
         # the smallest possible representation (empty payloads) rather than
-        # dropping the structural fields.  This is the documented unavoidable
-        # tolerance.
+        # dropping the structural fields.
         return _assemble(prefix, "", False, middle, "", False, suffix)
 
     out_budget, err_budget = _allocate_payload_budget(
@@ -241,10 +253,16 @@ def format_shell_result(
     bounded_stdout = stdout if not stdout_nonempty else box_output(stdout, out_budget)
     bounded_stderr = stderr if not stderr_nonempty else box_output(stderr, err_budget)
 
-    return _assemble(
+    result = _assemble(
         prefix, bounded_stdout, stdout_nonempty, middle, bounded_stderr,
         stderr_nonempty, suffix,
     )
+
+    # Final guard: if we still exceed max_chars (e.g. marker overhead), clip.
+    if len(result) > max_chars:
+        result = result[:max_chars]
+
+    return result
 
 
 def _assemble(
