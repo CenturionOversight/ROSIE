@@ -210,11 +210,16 @@ class RatterSink:
         """Convert PEEP events to RATTER format and send as a batch.
 
         Returns True if all events were accepted by RATTER, False otherwise.
+        Never raises: malformed/unexpected event objects are logged and dropped.
         """
-        ratter_events = [
-            map_peep_to_ratter_event(
-                e, self._runtime_id, self._instance_id, command_id, task_id
-            )
-            for e in events
-        ]
+        try:
+            ratter_events = [
+                map_peep_to_ratter_event(
+                    e, self._runtime_id, self._instance_id, command_id, task_id
+                )
+                for e in events
+            ]
+        except Exception as exc:
+            logger.warning("RATTER PEEP event mapping failed; batch dropped: %s", exc)
+            return False
         return self.send(ratter_events)
