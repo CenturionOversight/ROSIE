@@ -187,10 +187,9 @@ class TestResolveToolCalls:
     def test_assistant_message_appended_to_history(self, tmp_workspace, yolo_policy):
         messages = [{"role": "user", "content": "do something"}]
         tc = _make_tool_call("inspect_file", json.dumps({"relative_path": "f.txt"}))
-        msg_with_tools = _make_message(content="Let me check", tool_calls=[tc])
-        mock_response = _make_response(msg_with_tools)
+        msg_with_tools = _make_message(content="Let Me check", tool_calls=[tc])
 
-        with patch("wrapper.cli._completion", return_value=mock_response):
+        with patch("wrapper.cli._completion", return_value=_make_response(msg_with_tools)):
             _resolve_tool_calls(
                 models=["model-a"],
                 messages=messages,
@@ -199,5 +198,55 @@ class TestResolveToolCalls:
             )
 
         assistant_msgs = [m for m in messages if m.get("role") == "assistant"]
-        assert len(assistant_msgs) == 1
+        # With max_iterations=1, the model produces tool calls but never a
+        # final text response — so the loop exhausts and appends an error
+        # assistant message (which is itself a final assistant answer).
+        assert len(assistant_msgs) == 2
         assert "tool_calls" in assistant_msgs[0]
+        assert "maximum iterations" in assistant_msgs[1]["content"].lower()
+
+    def test_final_assistant_response_retained_in_history(self, tmp_workspace, yolo_policy):
+        """The model's final text response must be appended to messages."""
+        messages = [{"role": "user", "content": "hi"}]
+        mock_response = _make_response(_make_message(content="Final answer here."))
+
+        with patch("wrapper.cli._completion", return_value=mock_response):
+            result = _resolve_tool_calls(
+                models=["model-a"],
+                messages=messages,
+                temperature=0.2,
+                max_iterations=5,
+            )
+
+        assert result == "Final answer here."
+        # The final assistant response must be in the history.
+        assistant_msgs = [m for m in messages if m.get("role") == "assistant"]
+        assert len(assistant_msgs) == 1
+        assert assistant_msgs[0]["content"] == "Final answer here."
+        assert messages[-1] == {"role": "assistant", "content": "Final answer here."}
+
+    def test_final_assistant_response_retained_after_tool_calls(self, tmp_workspace, yolo_policy):
+        """After tool calls resolve, the final text must still be in history."""
+        messages = [{"role": "user", "content": "list files"}]
+        tc = _make_tool_call("inspect_git_status", "{}")
+        msg_with_tools = _make_message(tool_calls=[tc])
+        msg_final = _make_message(content="Done! Files listed above.")
+
+        mock_resp_1 = _make_response(msg_with_tools)
+        mock_resp_2 = _make_response(msg_final)
+
+        with patch("wrapper.cli._completion", side_effect=[mock_resp_1, mock_resp_2]):
+            result = _resolve_tool_calls(
+                models=["model-a"],
+                messages=messages,
+                temperature=0.2,
+                max_iterations=5,
+            )
+
+        assert result == "Done! Files listed above."
+        assistant_msgs = [m for m in messages if m.get("role") == "assistant"]
+        # One assistant msg with tool_calls, one with final text.
+        assert len(assistant_msgs) == 2
+        # The last assistant message has the final answer.
+        assert assistant_msgs[-1]["content"] == "Done! Files listed above."
+        assert "tool_calls" not in assistant_msgs[-1]

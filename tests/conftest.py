@@ -11,6 +11,7 @@ def reset_global_state(monkeypatch):
     """Reset the global workspace root and policy before each test."""
     monkeypatch.setattr("wrapper.tools._workspace_root", None, raising=False)
     monkeypatch.setattr("wrapper.tools._policy", None, raising=False)
+    monkeypatch.setattr("wrapper.tools._shell_executor", None, raising=False)
 
 
 @pytest.fixture

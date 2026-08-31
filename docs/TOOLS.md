@@ -1,6 +1,50 @@
 # Tools
 
-ROSIE currently exposes five model-callable tools. Tool arguments are validated with Pydantic before execution.
+ROSIE currently exposes seven model-callable tools. Tool arguments are validated with Pydantic before execution.
+
+## `list_directory`
+
+Lists the contents of a directory within the workspace.
+
+Arguments:
+
+```text
+relative_path: string, default "."
+recursive: boolean, default false
+max_entries: integer >= 1, default 200
+```
+
+Behavior:
+
+- resolves the requested path against the workspace root;
+- rejects traversal outside the workspace;
+- returns sorted workspace-relative paths;
+- appends `/` to directories;
+- supports recursive listing when `recursive=true`;
+- stops cleanly at `max_entries`.
+
+## `search_workspace`
+
+Searches file names and UTF-8 text contents for a case-insensitive substring.
+
+Arguments:
+
+```text
+query: string
+relative_path: string, default "."
+max_results: integer >= 1, default 50
+```
+
+Behavior:
+
+- searches relative file paths and text contents;
+- content hits return `path:line:text`;
+- path-name hits return the relative path;
+- resolves the sub-directory against the workspace root;
+- rejects traversal outside the workspace;
+- skips binary files, files larger than 1 MiB, and ignored directories
+  (`.git`, `.venv`, `venv`, `node_modules`, `__pycache__`, `.pytest_cache`);
+- stops at `max_results`.
 
 ## `inspect_file`
 

@@ -6,8 +6,10 @@ The current runtime is deliberately small: LiteLLM handles model access, Pydanti
 
 ## Current capabilities
 
-ROSIE exposes five tools to the model:
+ROSIE exposes seven tools to the model:
 
+- `list_directory` — list workspace directory contents natively.
+- `search_workspace` — search file names and text contents natively.
 - `inspect_file` — read UTF-8 text files with line numbers.
 - `preview_write_file` — generate a unified diff without changing disk.
 - `write_file` — write or create UTF-8 files after policy approval.
@@ -109,6 +111,12 @@ For each turn ROSIE:
 
 The default maximum is 20 iterations and can be changed with `--max-iterations`.
 
+In interactive mode, conversation history is automatically compacted between
+turns to stay within bounded limits. Use `--history-turns` (default 12) to
+limit the number of prior turns retained, and `--history-chars` (default
+120000) to limit total characters. Compaction is deterministic — it does not
+call an LLM and never splits a turn in half.
+
 See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the full execution path.
 
 ## Tests
@@ -122,8 +130,8 @@ python -m pytest tests/ -v
 Current verified baseline:
 
 ```text
-210 discovered
-209 passed
+270 discovered
+269 passed
 0 failed
 1 skipped
 ```
@@ -166,8 +174,11 @@ ROSIE/
 ├── wrapper/
 │   ├── __init__.py
 │   ├── cli.py
+│   ├── context.py
 │   ├── policy.py
-│   └── tools.py
+│   ├── ratter_sink.py
+│   ├── tools.py
+│   └── peep_shell.py
 ├── tests/
 │   ├── conftest.py
 │   ├── test_agent_loop.py

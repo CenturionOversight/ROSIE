@@ -29,6 +29,7 @@ import litellm
 
 import litellm.exceptions as litellm_errors
 
+from wrapper.context import compact_history
 from wrapper.policy import ApprovalPolicy, ExecutionPolicy
 from wrapper.tools import (
     TOOL_SCHEMAS,
@@ -104,7 +105,19 @@ def _build_parser() -> argparse.ArgumentParser:
         "--max-iterations",
         type=int,
         default=20,
-        help="Maximum tool-calling iterations per turn (default: 20).",
+        help="Maximum tool-calling iterations per turn (default 20).",
+    )
+    parser.add_argument(
+        "--history-turns",
+        type=int,
+        default=12,
+        help="Maximum number of prior conversation turns to retain in interactive mode (default 12).",
+    )
+    parser.add_argument(
+        "--history-chars",
+        type=int,
+        default=120000,
+        help="Maximum total characters of conversation history to retain (default 120000).",
     )
     parser.add_argument(
         "--no-fallback",
@@ -246,6 +259,9 @@ def _resolve_tool_calls(
 
         # No tool calls → the model produced a final text answer.
         final_text = message.content or "(no text response from model)"
+        # Append the final assistant response to conversation history so the
+        # next turn knows what ROSIE previously told the user.
+        messages.append({"role": "assistant", "content": final_text})
         break
     else:
         final_text = (
@@ -253,6 +269,7 @@ def _resolve_tool_calls(
             "without a final response. The task may require a more "
             "specific prompt or a tool error is preventing progress."
         )
+        messages.append({"role": "assistant", "content": final_text})
 
     return final_text
 
@@ -280,7 +297,7 @@ def main(argv: list[str] | None = None) -> int:
     # Configure PEEP-backed shell executor for local execution (if available).
     # This does not affect HACKASS/Cloud Run, which imports wrapper.tools
     # without this configuration and uses the default subprocess executor.
-    _configure_peep_executor(root)
+    peep_status = _configure_peep_executor(root)
 
     # --- API key check ---
     # LiteLLM reads API keys from environment variables automatically.
@@ -320,6 +337,8 @@ def main(argv: list[str] | None = None) -> int:
         os.environ.setdefault("VERTEXAI_PROJECT", "rosie-fire")
         os.environ.setdefault("VERTEXAI_LOCATION", "global")
 
+    peep_status = _configure_peep_executor(root)
+
     # --- Approval policy ---
     policy = ApprovalPolicy()
     policy.update_from_flags(yolo=args.yolo, auto_write=args.auto_write)
@@ -328,7 +347,7 @@ def main(argv: list[str] | None = None) -> int:
     print(
         f"[wrapper] workspace={root}  model={args.model}  "
         f"fallbacks={model_chain[1:] if len(model_chain) > 1 else 'none'}  "
-        f"policy={policy.mode_name}"
+        f"{peep_status}  policy={policy.mode_name}"
     )
 
     # --- Build initial messages ---
@@ -363,7 +382,14 @@ def main(argv: list[str] | None = None) -> int:
             break
         if not prompt:
             continue
+        # Compact completed history before starting a new turn.
+        messages = compact_history(
+            messages,
+            max_turns=args.history_turns,
+            max_chars=args.history_chars,
+        )
         _run_turn(args, messages, prompt, policy, model_chain)
+
 
     return 0
 
@@ -397,22 +423,39 @@ def _is_vertex_model(model: str) -> bool:
     return model.startswith("vertex_ai/")
 
 
-def _configure_peep_executor(root: Path) -> None:
+def _configure_peep_executor(root: Path) -> str:
     """Configure PEEP-backed shell execution for local CLI use.
 
     Lazily imports PEEP and the local adapter so that environments without
     PEEP installed (including Cloud Run) continue to use the default
     subprocess executor.
+
+    Returns:
+        A status string for the startup banner.  ``"peep=attached"`` on
+        success, or ``"peep=unavailable fallback=subprocess reason=<...>"``
+        on failure.  The reason is also printed to stderr.
     """
     try:
         from wrapper.peep_shell import PeepShellExecutor
     except ImportError:
-        return
+        reason = "PEEP_not_installed"
+        print(
+            f"[wrapper] peep=unavailable fallback=subprocess reason={reason}",
+            file=sys.stderr,
+        )
+        return f"peep=unavailable fallback=subprocess reason={reason}"
 
     try:
-        set_shell_executor(PeepShellExecutor(cwd=str(root)))
-    except Exception:
-        pass
+        executor = PeepShellExecutor(cwd=str(root))
+        set_shell_executor(executor)
+        return "peep=attached"
+    except Exception as exc:
+        reason = f"{type(exc).__name__}: {exc}"
+        print(
+            f"[wrapper] peep=unavailable fallback=subprocess reason={reason}",
+            file=sys.stderr,
+        )
+        return f"peep=unavailable fallback=subprocess reason={reason}"
 
 
 if __name__ == "__main__":

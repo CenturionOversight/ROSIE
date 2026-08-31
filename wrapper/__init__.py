@@ -13,6 +13,7 @@ Quick start::
 Modules:
     policy  — Approval state machine (ask / auto-write / yolo).
     tools   — Local execution handlers + OpenAI-format tool schemas.
+    context — Deterministic conversation-history compaction.
     cli     — REPL engine built on LiteLLM.
 """
 
@@ -24,8 +25,10 @@ from wrapper.tools import (
     dispatch_tool,
     inspect_file,
     inspect_git_status,
+    list_directory,
     preview_write_file,
     run_shell,
+    search_workspace,
     set_policy,
     set_workspace_root,
     write_file,
@@ -40,8 +43,10 @@ __all__ = [
     "dispatch_tool",
     "inspect_file",
     "inspect_git_status",
+    "list_directory",
     "preview_write_file",
     "run_shell",
+    "search_workspace",
     "set_policy",
     "set_workspace_root",
     "write_file",

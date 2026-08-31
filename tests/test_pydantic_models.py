@@ -4,8 +4,10 @@ from pydantic import ValidationError
 
 from wrapper.tools import (
     InspectFileArgs,
+    ListDirectoryArgs,
     PreviewWriteFileArgs,
     RunShellArgs,
+    SearchWorkspaceArgs,
     WriteFileArgs,
 )
 
@@ -88,3 +90,51 @@ class TestRunShellArgs:
     def test_extra_forbidden(self):
         with pytest.raises(ValidationError):
             RunShellArgs(command="ls", unknown="x")
+
+
+class TestListDirectoryArgs:
+    def test_valid_defaults(self):
+        args = ListDirectoryArgs()
+        assert args.relative_path == "."
+        assert args.recursive is False
+        assert args.max_entries == 200
+
+    def test_valid_explicit(self):
+        args = ListDirectoryArgs(relative_path="src", recursive=True, max_entries=50)
+        assert args.relative_path == "src"
+        assert args.recursive is True
+        assert args.max_entries == 50
+
+    def test_max_entries_zero_rejected(self):
+        with pytest.raises(ValidationError):
+            ListDirectoryArgs(max_entries=0)
+
+    def test_extra_forbidden(self):
+        with pytest.raises(ValidationError):
+            ListDirectoryArgs(relative_path=".", unknown="x")
+
+
+class TestSearchWorkspaceArgs:
+    def test_valid_defaults(self):
+        args = SearchWorkspaceArgs(query="hello")
+        assert args.query == "hello"
+        assert args.relative_path == "."
+        assert args.max_results == 50
+
+    def test_valid_explicit(self):
+        args = SearchWorkspaceArgs(query="import", relative_path="src", max_results=10)
+        assert args.query == "import"
+        assert args.relative_path == "src"
+        assert args.max_results == 10
+
+    def test_missing_query_rejected(self):
+        with pytest.raises(ValidationError):
+            SearchWorkspaceArgs()
+
+    def test_max_results_zero_rejected(self):
+        with pytest.raises(ValidationError):
+            SearchWorkspaceArgs(query="x", max_results=0)
+
+    def test_extra_forbidden(self):
+        with pytest.raises(ValidationError):
+            SearchWorkspaceArgs(query="x", unknown="y")

@@ -1,8 +1,8 @@
 """Local execution handlers and OpenAI-format tool schemas.
 
-Defines five core tools — inspect_file, preview_write_file, write_file,
-inspect_git_status, and run_shell — backed by :mod:`pathlib`,
-:mod:`subprocess`, :mod:`difflib`, and :mod:`re`.
+Defines seven core tools — list_directory, search_workspace, inspect_file,
+preview_write_file, write_file, inspect_git_status, and run_shell — backed
+by :mod:`pathlib`, :mod:`subprocess`, :mod:`difflib`, and :mod:`re`.
 
 All file-system operations are constrained to a workspace root set via
 :func:`set_workspace_root`.  The :func:`_resolve_safe_path` helper
@@ -34,6 +34,8 @@ __all__ = [
     "get_workspace_root",
     "set_policy",
     "set_shell_executor",
+    "list_directory",
+    "search_workspace",
     "inspect_file",
     "preview_write_file",
     "write_file",
@@ -204,8 +206,47 @@ class RunShellArgs(BaseModel):
     model_config = {"extra": "forbid"}
 
 
+class ListDirectoryArgs(BaseModel):
+    """Arguments for :func:`list_directory`."""
+
+    relative_path: str = Field(
+        default=".",
+        description="Path to list relative to the workspace root (default: current directory).",
+    )
+    recursive: bool = Field(
+        default=False,
+        description="If true, recursively list all descendants.",
+    )
+    max_entries: int = Field(
+        default=200,
+        ge=1,
+        description="Maximum number of entries to return (default 200).",
+    )
+
+    model_config = {"extra": "forbid"}
+
+
+class SearchWorkspaceArgs(BaseModel):
+    """Arguments for :func:`search_workspace`."""
+
+    query: str = Field(..., description="Case-insensitive substring to search for in file paths and text content.")
+    relative_path: str = Field(
+        default=".",
+        description="Subdirectory to search within, relative to the workspace root (default: entire workspace).",
+    )
+    max_results: int = Field(
+        default=50,
+        ge=1,
+        description="Maximum number of results to return (default 50).",
+    )
+
+    model_config = {"extra": "forbid"}
+
+
 #: Mapping of tool name → pydantic model (or ``None`` for no-arg tools).
 TOOL_MODELS: dict[str, Optional[type[BaseModel]]] = {
+    "list_directory": ListDirectoryArgs,
+    "search_workspace": SearchWorkspaceArgs,
     "inspect_file": InspectFileArgs,
     "preview_write_file": PreviewWriteFileArgs,
     "write_file": WriteFileArgs,
@@ -217,6 +258,168 @@ TOOL_MODELS: dict[str, Optional[type[BaseModel]]] = {
 # ---------------------------------------------------------------------------
 # Core tool functions
 # ---------------------------------------------------------------------------
+
+_IGNORED_DIRS = frozenset({
+    ".git",
+    ".venv",
+    "venv",
+    "node_modules",
+    "__pycache__",
+    ".pytest_cache",
+})
+_MAX_FILE_SCAN_BYTES = 1024 * 1024  # 1 MiB
+
+
+def _iter_workspace_files(
+    root: Path, relative_path: str, max_results: int
+) -> list[Path]:
+    """Yield workspace files under *relative_path*, skipping ignored dirs.
+
+    Returns at most *max_results* paths.
+    """
+    start = _resolve_safe_path(root, relative_path)
+    if not start.exists():
+        return []
+    if start.is_file():
+        return [start]
+    collected: list[Path] = []
+    for entry in sorted(start.rglob("*")):
+        if len(collected) >= max_results:
+            break
+        parts = entry.relative_to(root).parts
+        if any(part in _IGNORED_DIRS for part in parts):
+            continue
+        if entry.is_file():
+            collected.append(entry)
+    return collected
+
+
+def list_directory(relative_path: str = ".", recursive: bool = False, max_entries: int = 200) -> str:
+    """Lists the contents of a directory within the workspace.
+
+    The path is validated to ensure it stays within the workspace root.
+    Directories have a trailing ``/`` appended.  Results are sorted.
+
+    Args:
+        relative_path: Path relative to the workspace root (default ``"."``).
+        recursive: If ``True``, recursively list all descendants.
+        max_entries: Maximum number of entries to return.
+
+    Returns:
+        A newline-separated list of workspace-relative paths.
+
+    Raises:
+        PathTraversalError: If the path escapes the workspace root.
+    """
+    root = get_workspace_root()
+    resolved = _resolve_safe_path(root, relative_path)
+
+    if not resolved.exists():
+        raise FileNotFoundError(f"Path not found: {relative_path}")
+    if not resolved.is_dir():
+        raise NotADirectoryError(f"Not a directory: {relative_path}")
+
+    entries: list[str] = []
+
+    if recursive:
+        for entry in sorted(resolved.rglob("*")):
+            if len(entries) >= max_entries:
+                break
+            parts = entry.relative_to(root).parts
+            if any(part in _IGNORED_DIRS for part in parts):
+                continue
+            rel = entry.relative_to(root).as_posix()
+            if entry.is_dir():
+                entries.append(rel + "/")
+            else:
+                entries.append(rel)
+    else:
+        for entry in sorted(resolved.iterdir()):
+            if len(entries) >= max_entries:
+                break
+            parts = entry.relative_to(root).parts
+            if any(part in _IGNORED_DIRS for part in parts):
+                continue
+            rel = entry.relative_to(root).as_posix()
+            if entry.is_dir():
+                entries.append(rel + "/")
+            else:
+                entries.append(rel)
+
+    if not entries:
+        return "(empty)"
+    return "\n".join(entries)
+
+
+def search_workspace(query: str, relative_path: str = ".", max_results: int = 50) -> str:
+    """Searches the workspace for a case-insensitive substring.
+
+    Searches both file names and UTF-8 text contents.  Binary files, files
+    larger than 1 MiB, and ignored directories (``.git``, ``node_modules``,
+    ``__pycache__``, etc.) are skipped.
+
+    Args:
+        query: Case-insensitive substring to search for.
+        relative_path: Subdirectory to limit the search to (default entire workspace).
+        max_results: Maximum number of results to return.
+
+    Returns:
+        A newline-separated list of matches.  Content matches are formatted as
+        ``path:line:text``.  Path-name matches show the relative path.
+
+    Raises:
+        PathTraversalError: If *relative_path* escapes the workspace root.
+    """
+    root = get_workspace_root()
+    start = _resolve_safe_path(root, relative_path)
+
+    if not start.exists():
+        return f"Path not found: {relative_path}"
+
+    if start.is_file():
+        files = [start]
+    else:
+        files = _iter_workspace_files(root, relative_path, max_results * 4)
+
+    query_lower = query.lower()
+    results: list[str] = []
+
+    for fpath in files:
+        if len(results) >= max_results:
+            break
+
+        rel = fpath.relative_to(root).as_posix()
+
+        # Check file name first (path-name hit).
+        if query_lower in rel.lower():
+            results.append(rel)
+            if len(results) >= max_results:
+                break
+            continue
+
+        # Content search.
+        if len(results) >= max_results:
+            break
+        try:
+            raw = fpath.read_bytes()
+        except (OSError, PermissionError):
+            continue
+        if len(raw) > _MAX_FILE_SCAN_BYTES:
+            continue
+        try:
+            text = raw.decode("utf-8")
+        except (UnicodeDecodeError, ValueError):
+            continue
+        for lineno, line in enumerate(text.splitlines(), start=1):
+            if query_lower in line.lower():
+                results.append(f"{rel}:{lineno}:{line}")
+                if len(results) >= max_results:
+                    break
+
+    if not results:
+        return f"No results found for '{query}'."
+    return "\n".join(results)
+
 
 def inspect_file(relative_path: str, start_line: int = 1, line_count: int = 100) -> str:
     """Reads a file from the workspace and returns its content with line numbers.
@@ -433,6 +636,8 @@ def run_shell(command: str, timeout: Optional[int] = 30) -> str:
 
 #: Mapping of tool name → executable Python function.
 TOOL_REGISTRY: dict[str, Any] = {
+    "list_directory": list_directory,
+    "search_workspace": search_workspace,
     "inspect_file": inspect_file,
     "preview_write_file": preview_write_file,
     "write_file": write_file,

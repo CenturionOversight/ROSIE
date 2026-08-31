@@ -45,6 +45,16 @@ class TestArgumentParser:
         args = parser.parse_args([".", "--max-iterations", "50"])
         assert args.max_iterations == 50
 
+    def test_history_turns(self):
+        parser = _build_parser()
+        args = parser.parse_args([".", "--history-turns", "5"])
+        assert args.history_turns == 5
+
+    def test_history_chars(self):
+        parser = _build_parser()
+        args = parser.parse_args([".", "--history-chars", "50000"])
+        assert args.history_chars == 50000
+
     def test_no_fallback_flag(self):
         parser = _build_parser()
         args = parser.parse_args([".", "--no-fallback"])
