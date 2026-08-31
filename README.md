@@ -1,12 +1,40 @@
 # ROSIE
 
-ROSIE is a Python-based agentic command-line interface that gives an LLM controlled access to a local workspace. It can inspect files, preview and write changes, inspect Git state, run shell commands, and continue reasoning across multiple tool calls until a task is complete.
+ROSIE is the local-machine bridge/runtime for the software-construction stack around HACKASS and ARCHESTRATOR.
 
-The current runtime is deliberately small: LiteLLM handles model access, Pydantic validates tool arguments, and ROSIE owns the execution loop, approval policy, workspace boundary for file tools, and local action layer.
+Its job is locality.
 
-## Current capabilities
+HACKASS is the program the human communicates with. ARCHESTRATOR is the engineering engine that manages the structured build process. ROSIE translates authorized engineering actions into operations the machine where the work lives can actually perform.
 
-ROSIE exposes ten tools to the model:
+```text
+Human
+  ↓
+HACKASS
+  intent / conversation / product decisions
+  ↓
+ARCHESTRATOR
+  engineering plan / work / execution state / verification
+  ↓
+ROSIE
+  local-machine bridge / translation / controlled action
+  ↓
+Local machine
+  files / repository / shell / tools / runtime
+```
+
+ROSIE does not replace ARCHESTRATOR's engineering process and it is not the user-facing product interface.
+
+## Current implementation
+
+The current ROSIE repository contains a working Python-based local runtime that gives an intelligent system controlled access to a workspace.
+
+That runtime can inspect files, preview and write changes, inspect Git state, run shell commands, and continue across multiple tool calls. It is also usable directly as a standalone CLI for development, testing, and local operation.
+
+The standalone runtime is an implementation of ROSIE's local side, not a claim that ROSIE owns the higher-level HACKASS product conversation or ARCHESTRATOR's engineering lifecycle.
+
+## Current local action surface
+
+ROSIE exposes ten local tools:
 
 - `list_directory` — list workspace directory contents natively.
 - `search_workspace` — search file names and text contents natively (budget-bounded by `max_files`).
@@ -14,15 +42,14 @@ ROSIE exposes ten tools to the model:
 - `preview_write_file` — generate a unified diff without changing disk.
 - `write_file` — write or create UTF-8 files after policy approval.
 - `apply_patch` — apply a small targeted edit to an existing UTF-8 file after policy approval.
-- `inspect_git_status` — run `git status --short` in the workspace.
-- `inspect_git_diff` — show the unstaged or staged diff, optionally path-filtered.
-- `inspect_git_log` — show recent commit history, optionally path-filtered.
-- `run_shell` — execute a shell command in the workspace after policy approval.
+- `inspect_git_status` — inspect working-tree status.
+- `inspect_git_diff` — inspect staged or unstaged diffs.
+- `inspect_git_log` — inspect recent commit history.
+- `run_shell` — execute a shell command after policy approval.
 
-Every standalone conversation begins with a compact ROSIE operating system
-prompt (see `wrapper/system_prompt.py`) that instructs the model to inspect
-before modifying, prefer native/read-only inspection tools, never invent
-results, and only claim verified work.
+Every standalone conversation begins with a compact operating system prompt (`wrapper/system_prompt.py`) that instructs the model to inspect before modifying, prefer native/read-only inspection tools, never invent results, and only claim verified work.
+
+## Local authority and approval
 
 ROSIE supports three execution policies:
 
@@ -32,13 +59,15 @@ ROSIE supports three execution policies:
 
 At any approval prompt, choosing `[a]lways` upgrades the current session to `yolo`.
 
+These controls belong close to the local action surface because ROSIE is the layer that crosses from requested engineering work into machine authority.
+
 ## Requirements
 
 - Python 3.14+
 - `litellm>=1.0.0`
 - `pydantic>=2.0.0`
-- `google-adk>=1.0.0` (Google ADK for the HACKASS agent execution path)
-- Google Cloud SDK (`gcloud`) for Vertex AI / Cloud Run operations
+- `google-adk>=1.0.0` for the hackathon HACKASS integration path
+- Google Cloud SDK (`gcloud`) for the current Vertex AI / Cloud Run hackathon deployment
 
 Install dependencies:
 
@@ -46,7 +75,7 @@ Install dependencies:
 python -m pip install -r requirements.txt
 ```
 
-## Quick start
+## Standalone local quick start
 
 Run ROSIE against the current directory:
 
@@ -84,48 +113,28 @@ Disable fallback models:
 python -m wrapper.cli . --no-fallback "quick task"
 ```
 
-## Model access
+## Standalone model access
 
-ROSIE uses LiteLLM. The default model is:
+The standalone ROSIE CLI currently uses LiteLLM as a model-provider abstraction.
 
-```text
-vertex_ai/gemini-3.7-flash
-```
+The hackathon HACKASS path is different: HACKASS uses Google ADK and Gemini through Vertex AI and delegates authorized actions into the incorporated ARCHESTRATOR/local tool surface.
 
-Vertex AI uses Google Application Default Credentials (ADC). Ensure you have
-authenticated with:
+ROSIE's product role does not depend on ROSIE being the primary reasoning model. Its durable responsibility is translating authorized work into local-machine action.
 
-```bash
-gcloud auth application-default login --project=rosie-fire
-```
+## Standalone agent loop
 
-ROSIE automatically sets `VERTEXAI_PROJECT=rosie-fire` and
-`VERTEXAI_LOCATION=global` for local execution.
-
-The default Vertex model does **not** fall back to OpenRouter or Ollama — if
-Vertex fails, the error is surfaced directly. Use `--no-fallback` to disable
-fallbacks for any model, or `--model` to explicitly select an alternative.
-
-## Agent loop
-
-For each turn ROSIE:
+For each standalone turn ROSIE:
 
 1. appends the user request to conversation state;
 2. calls the active model through LiteLLM with the current tool schemas;
-3. executes any returned tool calls;
+3. executes returned local tool calls;
 4. appends tool results to conversation state;
-5. calls the model again;
+5. calls the model again; and
 6. repeats until the model returns a final text response or the iteration cap is reached.
 
-The default maximum is 20 iterations and can be changed with `--max-iterations`.
+The default maximum is 20 iterations.
 
-In interactive mode, conversation history is automatically compacted between
-turns to stay within bounded limits. Use `--history-turns` (default 12) to
-limit the number of prior turns retained, and `--history-chars` (default
-120000) to limit total characters. Compaction is deterministic — it does not
-call an LLM and never splits a turn in half.
-
-See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the full execution path.
+Conversation history is compacted deterministically between turns to stay within bounded limits. The compactor does not call another model and preserves the system prompt.
 
 ## Tests
 
@@ -135,7 +144,7 @@ Run the complete suite:
 python -m pytest tests/ -v
 ```
 
-Current verified baseline:
+Current verified baseline documented in this repository:
 
 ```text
 324 discovered
@@ -146,8 +155,6 @@ Current verified baseline:
 
 The skipped test is the symlink escape test on Windows.
 
-See [docs/TESTING.md](docs/TESTING.md).
-
 ## Documentation
 
 - [Architecture](docs/ARCHITECTURE.md)
@@ -157,165 +164,67 @@ See [docs/TESTING.md](docs/TESTING.md).
 - [Security boundaries](docs/SECURITY.md)
 - [Testing](docs/TESTING.md)
 - [All Things Agentic hackathon](docs/HACKATHON.md)
+- [Devpost submission draft](docs/SUBMISSION.md)
 
-## Repository layout
+## Repository layout and provenance
+
+This repository currently contains both the ROSIE local runtime and the Google All Things Agentic hackathon integration used to demonstrate HACKASS.
 
 ```text
 ROSIE/
 ├── README.md
-├── requirements.txt
-├── Dockerfile
-├── .dockerignore
-├── .firebaserc
-├── firebase.json
 ├── server.py
-├── public/
-│   ├── index.html
-│   ├── app.js
-│   └── styles.css
-├── hackass/
-│   ├── __init__.py
-│   ├── config.py
-│   ├── bridge.py
-│   ├── agent.py
-│   └── run.py
-├── wrapper/
-│   ├── __init__.py
-│   ├── cli.py
-│   ├── context.py
-│   ├── policy.py
-│   ├── ratter_sink.py
-│   ├── system_prompt.py
-│   ├── tools.py
-│   └── peep_shell.py
+├── public/                 hackathon web surface
+├── hackass/                hackathon-created Google ADK + Gemini path
+├── wrapper/                incorporated local execution foundation
 ├── tests/
-│   ├── conftest.py
-│   ├── test_agent_loop.py
-│   ├── test_cli.py
-│   ├── test_completion_fallback.py
-│   ├── test_path_traversal.py
-│   ├── test_policy.py
-│   ├── test_pydantic_models.py
-│   ├── test_tools.py
-│   ├── test_hackass_integration.py
-│   └── test_server_execute.py
 └── docs/
 ```
 
-## Cloud deployment
+For hackathon provenance:
 
-ROSIE runs as a containerized HTTP service on Google Cloud Run under the `rosie-fire` project.
+- **HACKASS** is the newly created user-facing hackathon project/integration.
+- **ARCHESTRATOR** is pre-existing engineering/execution software incorporated into the submission and disclosed as such.
+- **ROSIE** is the local-machine bridge/runtime product role represented by the local action surface in this repository.
 
-### Container image
+The names describe different responsibilities even though the hackathon repository temporarily contains code serving all three boundaries.
 
-The Docker image is built from `python:3.14-slim`, installs dependencies from `requirements.txt`, and runs `python -m server` as the entrypoint. The server binds to the `PORT` environment variable (default 8080).
+## Current Google Cloud hackathon deployment
 
-### Local container run
+The current hackathon demo uses:
 
-```bash
-docker build -t rosie .
-docker run -p 8080:8080 rosie
-curl http://localhost:8080/health
+- Firebase Hosting for the browser surface;
+- Cloud Run for the containerized HTTP service;
+- Artifact Registry for the image;
+- Google ADK for the hackathon agent framework; and
+- Gemini 3.7 Flash through Vertex AI.
+
+The current deployed execution path is:
+
+```text
+Browser / HACKASS interface
+  ↓
+Firebase Hosting
+  ↓
+Cloud Run
+  ↓
+HACKASS Google ADK + Gemini path
+  ↓
+incorporated ARCHESTRATOR/local tool layer
+  ↓
+workspace available to the deployed runtime
 ```
 
-### Google Cloud Run service
+### Important locality boundary
 
-| Field | Value |
-|-------|-------|
-| Service name | `rosie-api` |
-| Region | `us-central1` |
-| Project | `rosie-fire` |
-| Image | `us-central1-docker.pkg.dev/rosie-fire/rosie-images/rosie-api` |
-| URL | `https://rosie-api-rqcuxs7u6a-uc.a.run.app` |
+The Cloud Run demo executes against the workspace available inside the deployed runtime.
 
-### Firebase Hosting
+That is not the same thing as reaching into an end user's separate laptop or desktop over the internet.
 
-Firebase Hosting acts as a static-frontend proxy to Cloud Run. The `/health` and `/execute` routes are rewritten to the Cloud Run service; all other paths serve static files from `public/`.
+ROSIE's product role is the local-machine bridge. A web-to-user-machine path should only be described as live when a ROSIE process is actually attached on that machine and the communication path between the web-side system and ROSIE has been implemented and verified.
 
-Hosting URL: `https://rosie-fire.web.app`
+This distinction keeps the hackathon demonstration factual while preserving the intended architecture:
 
-The routing is configured in `firebase.json` using Firebase Hosting's Cloud Run rewrite mechanism. There is no Firebase Functions dependency.
-
-### Deployment
-
-```bash
-# Build and push the container image
-docker build -t us-central1-docker.pkg.dev/rosie-fire/rosie-images/rosie-api .
-docker push us-central1-docker.pkg.dev/rosie-fire/rosie-images/rosie-api
-
-# Deploy to Cloud Run
-gcloud run deploy rosie-api \
-  --image us-central1-docker.pkg.dev/rosie-fire/rosie-images/rosie-api \
-  --project=rosie-fire \
-  --region=us-central1 \
-  --allow-unauthenticated
-
-# Deploy Firebase Hosting
-firebase deploy --only hosting --project rosie-fire
+```text
+HACKASS → ARCHESTRATOR → ROSIE → local machine
 ```
-
-### Portability
-
-The ROSIE application code does not depend on any Google-specific runtime APIs for normal operation. Google-specific integration is isolated to:
-
-- `server.py` — the HTTP boundary layer (portable stdlib `http.server`, no Google APIs)
-- `Dockerfile` — the container packaging
-
-The HACKASS Google ADK + Gemini 3.5+ integration lives in `hackass/`, which `server.py` calls through a narrow adapter. The same container can be deployed to any container platform. See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the full architecture and boundary documentation.
-
-## HACKASS: Google ADK + Gemini execution
-
-HACKASS is the hackathon-created integration that executes tasks through Google ADK and Gemini 3.5+.
-
-### Local execution
-
-```bash
-# Authenticate to Google Cloud (uses ADC for Vertex AI)
-gcloud auth application-default login --project=rosie-fire
-
-# Run a task directly through the HACKASS CLI
-python -m hackass.run /path/to/workspace "inspect the repository architecture"
-
-# Run the HTTP server and call it
-python -m server
-curl -X POST http://localhost:8080/execute \
-  -H "Content-Type: application/json" \
-  -d '{"prompt": "What is in the README?"}'
-```
-
-The execution chain is:
-
-Browser/CLI → `server.py` → `hackass.run_hackass()` → Google ADK → Gemini 3.5+ (Vertex AI) → ARCHESTRATOR tools → workspace → result.
-
-### Google Cloud services used
-
-| Service | Project | Purpose |
-|---------|---------|---------|
-| Cloud Run | `rosie-fire` / `us-central1` | Container host for `server.py` |
-| Firebase Hosting | `rosie-fire` | Static frontend + `/health` + `/execute` proxy |
-| Artifact Registry | `rosie-fire` | Container image registry |
-| Vertex AI | `rosie-fire` / `global` | Gemini 3.5+ model access |
-
-### Pre-existing code disclosure
-
-HACKASS incorporates pre-existing ARCHESTRATOR software (`wrapper/` package). This includes the agent loop, tool execution, approval policies, workspace controls, and LiteLLM abstraction. See [docs/HACKATHON.md](docs/HACKATHON.md) for the full provenance disclosure.
-
-### Provenance
-
-- **HACKASS** — hackathon-created integration (Google ADK, Gemini, web deployment).
-- **ARCHESTRATOR** — pre-existing incorporated software (`wrapper/`).
-- **ROSIE** — product identity outside the hackathon provenance distinction.
-
-## Web interface
-
-ROSIE has a minimal web interface deployed at `https://rosie-fire.web.app`.
-
-| Layer | Technology | Purpose |
-|-------|-----------|---------|
-| Static frontend | HTML/CSS/JS (no framework) | Landing page, backend status, task input, conversation display |
-| Firebase Hosting | Static host + proxy | Serves static files, proxies `/health` and `/execute` to Cloud Run |
-| Cloud Run | `rosie-api` | Containerized Python HTTP server (`server.py`) |
-| HACKASS | `hackass/` | Google ADK + Gemini 3.5+ execution path |
-| ARCHESTRATOR | `wrapper/` | Agent loop, tools, approval policy |
-
-The web interface displays backend connectivity via `GET /health` and allows users to submit tasks via `POST /execute`. Tasks are executed through the HACKASS Google ADK + Gemini 3.5+ path and results are displayed in the browser.
