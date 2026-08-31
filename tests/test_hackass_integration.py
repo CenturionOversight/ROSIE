@@ -19,7 +19,24 @@ class TestHackassImports:
         assert MODEL_NAME == "gemini-3.7-flash"
 
     def test_bridge_module_imports(self):
-        pass
+        from hackass.bridge import (
+            create_architect_tools,
+            inspect_file,
+            inspect_git_status,
+            preview_write_file,
+            run_shell,
+            write_file,
+        )
+
+        for symbol in (
+            create_architect_tools,
+            inspect_file,
+            inspect_git_status,
+            preview_write_file,
+            run_shell,
+            write_file,
+        ):
+            assert callable(symbol)
 
     def test_config_module_imports(self):
         from hackass.config import (
