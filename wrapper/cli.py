@@ -406,7 +406,19 @@ def _run_turn(
     policy: ApprovalPolicy,
     model_chain: list[str],
 ) -> None:
-    """Execute a single agent turn: append user message, resolve tools, print."""
+    """Execute a single agent turn: append user message, resolve tools, print.
+
+    A fresh ``task_id`` (``task_<uuid>``) is assigned to the turn and recorded
+    in the runtime context before any tool runs.  Every shell command, PEEP
+    session, and RATTER telemetry event produced during the turn is correlated
+    to that id.  The id is telemetry plumbing only — it is never exposed to the
+    model as a tool argument.
+    """
+    from uuid import uuid4
+
+    from wrapper.rt_context import set_current_task_id
+
+    set_current_task_id(f"task_{uuid4().hex[:12]}")
     messages.append({"role": "user", "content": prompt})
     result = _resolve_tool_calls(
         models=model_chain,

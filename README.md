@@ -34,7 +34,7 @@ The standalone runtime is an implementation of ROSIE's local side, not a claim t
 
 ## Current local action surface
 
-ROSIE exposes ten local tools:
+ROSIE exposes twelve local tools:
 
 - `list_directory` — list workspace directory contents natively.
 - `search_workspace` — search file names and text contents natively (budget-bounded by `max_files`).
@@ -42,6 +42,8 @@ ROSIE exposes ten local tools:
 - `preview_write_file` — generate a unified diff without changing disk.
 - `write_file` — write or create UTF-8 files after policy approval.
 - `apply_patch` — apply a small targeted edit to an existing UTF-8 file after policy approval.
+- `move_path` — move (rename) a file or directory within the workspace after policy approval; never overwrites.
+- `delete_path` — delete a file, or a directory recursively with `recursive=true`, after policy approval.
 - `inspect_git_status` — inspect working-tree status.
 - `inspect_git_diff` — inspect staged or unstaged diffs.
 - `inspect_git_log` — inspect recent commit history.

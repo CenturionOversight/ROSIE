@@ -184,11 +184,11 @@ class TestDispatchTool:
 
 
 class TestToolRegistryAndSchemas:
-    def test_tool_registry_has_ten_entries(self):
-        assert len(TOOL_REGISTRY) == 10
+    def test_tool_registry_has_twelve_entries(self):
+        assert len(TOOL_REGISTRY) == 12
 
-    def test_tool_schemas_has_ten_entries(self):
-        assert len(TOOL_SCHEMAS) == 10
+    def test_tool_schemas_has_twelve_entries(self):
+        assert len(TOOL_SCHEMAS) == 12
 
     def test_all_tools_in_registry_have_schemas(self):
         for name in TOOL_REGISTRY:

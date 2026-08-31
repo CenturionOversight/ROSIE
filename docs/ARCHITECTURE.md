@@ -124,9 +124,20 @@ The standalone runtime can attach PEEP as the shell observation path. If PEEP is
 
 PEEP is observation around execution; it does not replace ROSIE's locality role or ARCHESTRATOR's engineering responsibility.
 
+### Task telemetry and RATTER
+
+Every standalone turn (`wrapper/cli.py:_run_turn`) is assigned a unique `task_id` (`task_<uuid>`) recorded in a lightweight runtime context (`wrapper/rt_context.py`). That id is telemetry plumbing only — it is never exposed to the model as a tool argument. All of a turn's shell commands, PEEP sessions, and RATTER telemetry events share the id, so a downstream observer can correlate a single user request with every machine action it caused.
+
+PEEP events are forwarded to RATTER through an asynchronous sink (`wrapper/ratter_async.py`). A bounded queue accepts events from the execution thread and a background worker posts batches to RATTER, so the HTTP telemetry round trip never sits on the command-execution path. Enqueue is non-blocking, the queue is bounded, and any RATTER failure is non-fatal: telemetry dropping never breaks command execution.
+
+Shell results carry two hardening properties shared by both the PEEP and the subprocess executors:
+
+- an explicit `TIMED_OUT: true|false` marker on every result, with an explicit timeout error message — a timeout is never inferred from an ambiguous exit code;
+- bounded output (head + tail, with an explicit truncation marker) so a model never receives an unbounded result payload.
+
 ## Local tool boundary
 
-The current local tool registry exposes bounded workspace discovery and file operations plus Git inspection and shell execution.
+The current local tool registry exposes bounded workspace discovery and file operations (including `move_path` and `delete_path`), Git inspection, and shell execution.
 
 `TOOL_REGISTRY` maps tool names to executable Python functions.
 

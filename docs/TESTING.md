@@ -15,8 +15,8 @@ python -m pytest tests/ -v
 The current baseline documented by the repository is:
 
 ```text
-324 discovered
-323 passed
+348 discovered
+347 passed
 0 failed
 1 skipped
 ```

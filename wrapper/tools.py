@@ -1,9 +1,10 @@
 """Local execution handlers and OpenAI-format tool schemas.
 
-Defines ten core tools — list_directory, search_workspace, inspect_file,
-preview_write_file, write_file, apply_patch, inspect_git_status,
-inspect_git_diff, inspect_git_log, and run_shell — backed by :mod:`pathlib`,
-:mod:`subprocess`, :mod:`difflib`, and :mod:`re`.
+Defines twelve core tools — list_directory, search_workspace, inspect_file,
+preview_write_file, write_file, apply_patch, move_path, delete_path,
+inspect_git_status, inspect_git_diff, inspect_git_log, and run_shell — backed
+by :mod:`pathlib`, :mod:`subprocess`, :mod:`difflib`, :mod:`shutil`, and
+:mod:`re`.
 
 All file-system operations are constrained to a workspace root set via
 :func:`set_workspace_root`.  The :func:`_resolve_safe_path` helper
@@ -22,6 +23,7 @@ approval (or the policy auto-approves).
 from __future__ import annotations
 
 import difflib
+import shutil
 import subprocess
 from pathlib import Path
 from typing import Any, Optional
@@ -46,6 +48,8 @@ __all__ = [
     "inspect_git_diff",
     "inspect_git_log",
     "run_shell",
+    "move_path",
+    "delete_path",
     "TOOL_MODELS",
     "TOOL_REGISTRY",
     "TOOL_SCHEMAS",
@@ -74,7 +78,13 @@ def set_shell_executor(executor: Any) -> None:
 
 
 def _default_shell_executor(command: str, timeout: int) -> str:
-    """Default shell executor using subprocess.run (unchanged from original)."""
+    """Default shell executor using subprocess.run.
+
+    Uses the shared :func:`wrapper.output_bounds.format_shell_result` shape so
+    the result is bounded and carries an explicit ``TIMED_OUT`` marker.
+    """
+    from wrapper.output_bounds import format_shell_result
+
     root = get_workspace_root()
     try:
         proc = subprocess.run(
@@ -85,21 +95,21 @@ def _default_shell_executor(command: str, timeout: int) -> str:
             text=True,
             timeout=timeout,
         )
-        result_parts = [f"$ {command}"]
-        stdout = proc.stdout.rstrip()
-        stderr = proc.stderr.rstrip()
-        result_parts.append(
-            f"STDOUT:\n{stdout}" if stdout else "STDOUT:\n(empty)"
+        return format_shell_result(
+            command,
+            stdout=proc.stdout.rstrip(),
+            stderr=proc.stderr.rstrip(),
+            exit_code=proc.returncode,
+            timed_out=False,
         )
-        result_parts.append(
-            f"STDERR:\n{stderr}" if stderr else "STDERR:\n(empty)"
-        )
-        result_parts.append(f"EXIT_CODE: {proc.returncode}")
-        return "\n".join(result_parts).strip()
     except subprocess.TimeoutExpired:
-        return (
-            f"$ {command}\n"
-            f"ERROR: Command timed out after {timeout} seconds."
+        return format_shell_result(
+            command,
+            stdout="",
+            stderr="",
+            exit_code=-1,
+            timed_out=True,
+            timeout_seconds=timeout,
         )
 
 
@@ -207,6 +217,36 @@ class RunShellArgs(BaseModel):
 
     command: str = Field(..., description="Shell command to execute.")
     timeout: Optional[int] = Field(default=None, ge=1, description="Optional timeout in seconds.")
+
+    model_config = {"extra": "forbid"}
+
+
+class MovePathArgs(BaseModel):
+    """Arguments for :func:`move_path`."""
+
+    source_path: str = Field(
+        ...,
+        description="Path of the file or directory to move, relative to the workspace root.",
+    )
+    destination_path: str = Field(
+        ...,
+        description="Destination path relative to the workspace root. Must not already exist.",
+    )
+
+    model_config = {"extra": "forbid"}
+
+
+class DeletePathArgs(BaseModel):
+    """Arguments for :func:`delete_path`."""
+
+    relative_path: str = Field(
+        ...,
+        description="Path of the file or directory to delete, relative to the workspace root.",
+    )
+    recursive: bool = Field(
+        default=False,
+        description="If true and the path is a directory, delete it recursively.",
+    )
 
     model_config = {"extra": "forbid"}
 
@@ -320,6 +360,8 @@ TOOL_MODELS: dict[str, Optional[type[BaseModel]]] = {
     "inspect_git_diff": InspectGitDiffArgs,
     "inspect_git_log": InspectGitLogArgs,
     "run_shell": RunShellArgs,
+    "move_path": MovePathArgs,
+    "delete_path": DeletePathArgs,
 }
 
 
@@ -908,12 +950,138 @@ def run_shell(command: str, timeout: Optional[int] = 30) -> str:
     effective_timeout = timeout if timeout is not None else 30
 
     try:
-        return executor(command, effective_timeout)
+        result = executor(command, effective_timeout)
+        if isinstance(result, str) and result:
+            return result
+        return str(result)
     except subprocess.TimeoutExpired:
-        return (
-            f"$ {command}\n"
-            f"ERROR: Command timed out after {effective_timeout} seconds."
+        from wrapper.output_bounds import format_shell_result
+
+        return format_shell_result(
+            command,
+            stdout="",
+            stderr="",
+            exit_code=-1,
+            timed_out=True,
+            timeout_seconds=effective_timeout,
         )
+
+
+def move_path(source_path: str, destination_path: str) -> str:
+    """Move (rename) a file or directory within the workspace.
+
+    The source and destination are both resolved against the workspace root
+    and traversal outside it is rejected.  The destination must not already
+    exist — this tool never overwrites an existing path.  The move is
+    performed with :func:`shutil.move` (no shell is involved).  It is a
+    mutation and therefore gated by the same ``write`` approval policy as
+    :func:`write_file`.
+
+    Args:
+        source_path: Path of the file or directory to move, relative to the
+            workspace root.
+        destination_path: Destination path relative to the workspace root.
+            Must not already exist (including as a non-empty directory).
+
+    Returns:
+        A status message, or an error / ``DENIED`` string if the move could
+        not proceed.
+
+    Raises:
+        PathTraversalError: If either path escapes the workspace root.
+    """
+    root = get_workspace_root()
+    src = _resolve_safe_path(root, source_path)
+    dst = _resolve_safe_path(root, destination_path)
+
+    if not src.exists():
+        return f"ERROR: Source path '{source_path}' does not exist."
+    if dst.exists():
+        return (
+            f"ERROR: Destination '{destination_path}' already exists. "
+            f"move_path never overwrites; choose a different destination."
+        )
+
+    if _policy is not None:
+        approved = _policy.request_approval(
+            "write",
+            f"Move '{source_path}' to '{destination_path}'",
+            details=f"Rename (filesystem) '{src}' -> '{dst}'",
+        )
+        if not approved:
+            return (
+                f"DENIED: Move of '{source_path}' was rejected. "
+                f"Nothing was moved."
+            )
+
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    shutil.move(str(src), str(dst))
+    return f"Successfully moved '{source_path}' to '{destination_path}'."
+
+
+def delete_path(relative_path: str, recursive: bool = False) -> str:
+    """Delete a file or directory within the workspace.
+
+    The path is resolved against the workspace root and traversal outside it
+    is rejected.  Deleting the workspace root itself (``"."`` or a path that
+    resolves to the root) is forbidden.  Files are deleted directly; a
+    directory requires ``recursive=True`` and is deleted with
+    :func:`shutil.rmtree`.  No shell is involved.  The deletion is a mutation
+    and is gated by the same ``write`` approval policy as :func:`write_file`.
+
+    Args:
+        relative_path: Path of the file or directory to delete, relative to
+            the workspace root.
+        recursive: If true and the path is a directory, delete it recursively.
+
+    Returns:
+        A status message, or an error / ``DENIED`` string.
+
+    Raises:
+        PathTraversalError: If the path escapes the workspace root.
+    """
+    root = get_workspace_root()
+    resolved = _resolve_safe_path(root, relative_path)
+
+    if resolved == root:
+        return "ERROR: Refusing to delete the workspace root."
+
+    if not resolved.exists():
+        return f"ERROR: Path '{relative_path}' does not exist."
+
+    is_dir = resolved.is_dir()
+    if is_dir and not recursive:
+        return (
+            f"ERROR: '{relative_path}' is a directory. Pass recursive=true "
+            f"to delete it and its contents."
+        )
+
+    if _policy is not None:
+        target_desc = (
+            f"directory '{relative_path}' (recursive)"
+            if is_dir
+            else f"file '{relative_path}'"
+        )
+        approved = _policy.request_approval(
+            "write",
+            f"Delete {target_desc}",
+            details=f"Filesystem delete of '{resolved}'",
+        )
+        if not approved:
+            return (
+                f"DENIED: Delete of '{relative_path}' was rejected. "
+                f"Nothing was deleted."
+            )
+
+    try:
+        if is_dir:
+            shutil.rmtree(str(resolved))
+        else:
+            resolved.unlink()
+    except OSError as exc:
+        return f"ERROR: Failed to delete '{relative_path}': {exc}"
+
+    return f"Successfully deleted '{relative_path}'."
 
 
 # ---------------------------------------------------------------------------
@@ -932,6 +1100,8 @@ TOOL_REGISTRY: dict[str, Any] = {
     "inspect_git_diff": inspect_git_diff,
     "inspect_git_log": inspect_git_log,
     "run_shell": run_shell,
+    "move_path": move_path,
+    "delete_path": delete_path,
 }
 
 

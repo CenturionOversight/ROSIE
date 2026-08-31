@@ -285,8 +285,9 @@ class TestConnectionFailure:
 
         executor = PeepShellExecutor(cwd=str(tmp_path))
         # Point sink at a dead port
-        if executor._ratter_sink is not None:
-            executor._ratter_sink._url = "http://localhost:1/api/v1/ingest/events"
+        async_sink = executor._ratter_sink
+        if async_sink is not None:
+            async_sink._sink._url = "http://localhost:1/api/v1/ingest/events"
 
         result = executor.execute("Write-Output 'survives-ratter-down'", timeout=30)
 
@@ -315,9 +316,10 @@ class TestTimeoutFailure:
         from wrapper.peep_shell import PeepShellExecutor
 
         executor = PeepShellExecutor(cwd=str(tmp_path))
-        if executor._ratter_sink is not None:
-            executor._ratter_sink._url = "http://localhost:8080/api/v1/ingest/events"
-            executor._ratter_sink._timeout = 0.001
+        async_sink = executor._ratter_sink
+        if async_sink is not None:
+            async_sink._sink._url = "http://localhost:8080/api/v1/ingest/events"
+            async_sink._sink._timeout = 0.001
 
         result = executor.execute("Write-Output 'survives-timeout'", timeout=30)
         assert "survives-timeout" in result
@@ -335,14 +337,17 @@ class TestCommandObservedReached:
         executor = PeepShellExecutor(cwd=str(tmp_path))
         sent_batches = []
 
-        if executor._ratter_sink is not None:
-            original_send = executor._ratter_sink.send_peep_events
-            def capture_send(events, command_id=None):
+        async_sink = executor._ratter_sink
+        if async_sink is not None:
+            async_sink._sink._enabled = False  # avoid real HTTP; capture at the sink
+            original_send = async_sink._sink.send_peep_events
+            def capture_send(events, command_id=None, task_id=None):
                 sent_batches.append(list(events))
-                return original_send(events, command_id)
-            executor._ratter_sink.send_peep_events = capture_send
+                return
+            async_sink._sink.send_peep_events = capture_send
 
         result = executor.execute("Get-Location", timeout=30)
+        async_sink.flush(timeout=2.0)
 
         # At least one batch should contain a command.observed event
         all_events = [e for batch in sent_batches for e in batch]
@@ -362,14 +367,17 @@ class TestCommandCompletedReached:
         executor = PeepShellExecutor(cwd=str(tmp_path))
         sent_batches = []
 
-        if executor._ratter_sink is not None:
-            original_send = executor._ratter_sink.send_peep_events
-            def capture_send(events, command_id=None):
+        async_sink = executor._ratter_sink
+        if async_sink is not None:
+            async_sink._sink._enabled = False  # avoid real HTTP; capture at the sink
+            original_send = async_sink._sink.send_peep_events
+            def capture_send(events, command_id=None, task_id=None):
                 sent_batches.append(list(events))
-                return original_send(events, command_id)
-            executor._ratter_sink.send_peep_events = capture_send
+                return
+            async_sink._sink.send_peep_events = capture_send
 
         result = executor.execute("Get-Location", timeout=30)
+        async_sink.flush(timeout=2.0)
 
         all_events = [e for batch in sent_batches for e in batch]
         completed_events = [e for e in all_events if e.event_type == "command.completed"]
@@ -386,8 +394,9 @@ class TestStdoutStderrUnchanged:
         from wrapper.peep_shell import PeepShellExecutor
 
         executor = PeepShellExecutor(cwd=str(tmp_path))
-        if executor._ratter_sink is not None:
-            executor._ratter_sink._enabled = False
+        async_sink = executor._ratter_sink
+        if async_sink is not None:
+            async_sink._sink._enabled = False
 
         result = executor.execute("Write-Output 'stdout-test-line'", timeout=30)
         assert "stdout-test-line" in result
@@ -396,8 +405,9 @@ class TestStdoutStderrUnchanged:
         from wrapper.peep_shell import PeepShellExecutor
 
         executor = PeepShellExecutor(cwd=str(tmp_path))
-        if executor._ratter_sink is not None:
-            executor._ratter_sink._enabled = False
+        async_sink = executor._ratter_sink
+        if async_sink is not None:
+            async_sink._sink._enabled = False
 
         result = executor.execute("Write-Error 'stderr-test-line'", timeout=30)
         assert "STDERR:" in result
@@ -407,8 +417,9 @@ class TestStdoutStderrUnchanged:
         from wrapper.peep_shell import PeepShellExecutor
 
         executor = PeepShellExecutor(cwd=str(tmp_path))
-        if executor._ratter_sink is not None:
-            executor._ratter_sink._enabled = False
+        async_sink = executor._ratter_sink
+        if async_sink is not None:
+            async_sink._sink._enabled = False
 
         result = executor.execute("exit 42", timeout=30)
         assert "EXIT_CODE: 42" in result

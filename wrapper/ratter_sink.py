@@ -63,7 +63,13 @@ def _peep_event_severity(event_type: str) -> str:
     return "info"
 
 
-def map_peep_to_ratter_event(event: PeepEvent, runtime_id: str, instance_id: str, command_id: str | None = None) -> dict[str, Any]:
+def map_peep_to_ratter_event(
+    event: PeepEvent,
+    runtime_id: str,
+    instance_id: str,
+    command_id: str | None = None,
+    task_id: str | None = None,
+) -> dict[str, Any]:
     """Convert a PeepEvent into a RATTER TelemetryEvent-compatible dict.
 
     Preserves PEEP identity fields verbatim:
@@ -77,6 +83,7 @@ def map_peep_to_ratter_event(event: PeepEvent, runtime_id: str, instance_id: str
     - metadata → preserved in payload
     - payload → payload
     - command_id → command_id (when available)
+    - task_id → carried in the payload (when available, ROSIE task correlation)
     """
     occurred_at = event.occurred_at.isoformat() if isinstance(event.occurred_at, datetime) else event.occurred_at
 
@@ -103,6 +110,8 @@ def map_peep_to_ratter_event(event: PeepEvent, runtime_id: str, instance_id: str
             "peep_payload": event.payload or {},
             "peep_sequence": event.sequence,
             "peep_schema_version": event.schema_version,
+            "rosie_task_id": task_id,
+            "rosie_command_id": command_id,
         },
         "command_id": command_id,
         "sensitivity": "internal",
@@ -192,13 +201,16 @@ class RatterSink:
         self,
         events: Iterable[PeepEvent],
         command_id: str | None = None,
+        task_id: str | None = None,
     ) -> bool:
         """Convert PEEP events to RATTER format and send as a batch.
 
         Returns True if all events were accepted by RATTER, False otherwise.
         """
         ratter_events = [
-            map_peep_to_ratter_event(e, self._runtime_id, self._instance_id, command_id)
+            map_peep_to_ratter_event(
+                e, self._runtime_id, self._instance_id, command_id, task_id
+            )
             for e in events
         ]
         return self.send(ratter_events)

@@ -35,14 +35,16 @@ __all__ = ["PeepShellExecutor"]
 
 
 def _get_ratter_sink():
-    """Lazily import and instantiate the RatterSink.
+    """Lazily import and instantiate the asynchronous RatterSink.
 
     Returns None if the module or RATTER is unavailable, so that
-    PEEP execution is never blocked by RATTER presence.
+    PEEP execution is never blocked by RATTER presence.  The returned sink
+    forwards events on a background worker thread so HTTP telemetry latency
+    never sits on the command-execution path.
     """
     try:
-        from wrapper.ratter_sink import RatterSink
-        return RatterSink()
+        from wrapper.ratter_async import AsyncRatterSink
+        return AsyncRatterSink()
     except Exception:
         return None
 
@@ -76,9 +78,10 @@ class PeepShellExecutor:
         Returns:
             A formatted block with $ command, STDOUT, STDERR, and EXIT_CODE.
         """
-        from peep.process_io import (
-            PROCESS_TERMINATE_TIMEOUT_SECONDS,
-        )
+        from wrapper.output_bounds import format_shell_result
+        from wrapper.rt_context import get_current_task_id
+
+        task_id = get_current_task_id()
 
         session_id = f"rosie-{uuid4().hex[:12]}"
         now = datetime.now(UTC)
@@ -113,10 +116,11 @@ class PeepShellExecutor:
         stderr_lines: list[str] = []
         exit_code: Optional[int] = None
         completed = False
+        timed_out = False
         command_id_for_ratter: Optional[str] = None
 
         def _forward_to_ratter(events: list[PeepEvent]) -> None:
-            """Forward PEEP events to RATTER. Never raises."""
+            """Forward PEEP events to RATTER (async, never blocking). Never raises."""
             if self._ratter_sink is None or not events:
                 return
             nonlocal command_id_for_ratter
@@ -127,7 +131,11 @@ class PeepShellExecutor:
                     if command_id_for_ratter is None:
                         command_id_for_ratter = e.payload.get("command_id")
             try:
-                self._ratter_sink.send_peep_events(events, command_id=command_id_for_ratter)
+                self._ratter_sink.send_peep_events(
+                    events,
+                    command_id=command_id_for_ratter,
+                    task_id=task_id,
+                )
             except Exception:
                 pass
 
@@ -155,10 +163,13 @@ class PeepShellExecutor:
 
                 if not completed:
                     if time.monotonic() >= deadline:
+                        timed_out = True
                         break
                     time.sleep(0.05)
 
-            if exit_code is None:
+            if timed_out:
+                exit_code = -1
+            elif exit_code is None:
                 exit_code = 0 if completed else -1
 
             # Drain any remaining output after completion.
@@ -170,18 +181,14 @@ class PeepShellExecutor:
         finally:
             adapter.stop()
 
-        stdout_text = "\n".join(stdout_lines).rstrip()
-        stderr_text = "\n".join(stderr_lines).rstrip()
-
-        result_parts = [f"$ {command}"]
-        result_parts.append(
-            f"STDOUT:\n{stdout_text}" if stdout_text else "STDOUT:\n(empty)"
+        return format_shell_result(
+            command,
+            stdout="\n".join(stdout_lines).rstrip(),
+            stderr="\n".join(stderr_lines).rstrip(),
+            exit_code=exit_code if exit_code is not None else -1,
+            timed_out=timed_out,
+            timeout_seconds=timeout or 30,
         )
-        result_parts.append(
-            f"STDERR:\n{stderr_text}" if stderr_text else "STDERR:\n(empty)"
-        )
-        result_parts.append(f"EXIT_CODE: {exit_code}")
-        return "\n".join(result_parts).strip()
 
     def _collect_stdout(self, event: PeepEvent) -> list[str]:
         if event.event_type == OUTPUT_STDOUT:

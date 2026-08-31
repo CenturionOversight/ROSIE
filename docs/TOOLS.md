@@ -2,7 +2,7 @@
 
 ROSIE is the local-machine bridge/runtime. This document describes the current **local action surface** it exposes to an attached or standalone reasoning system.
 
-The current runtime exposes ten model-callable local tools. Tool arguments are validated with Pydantic before execution.
+The current runtime exposes twelve model-callable local tools. Tool arguments are validated with Pydantic before execution.
 
 These tools do not make ROSIE the HACKASS user interface or the ARCHESTRATOR engineering engine. They are the machine-side capabilities through which authorized work can reach a workspace.
 
@@ -135,6 +135,44 @@ Behavior:
 7. leaves the file unchanged if approval is denied; and
 8. replaces only the exact matched text.
 
+## `move_path`
+
+Moves (renames) a file or directory within the workspace.
+
+Arguments:
+
+```text
+source_path: string
+destination_path: string
+```
+
+Behavior:
+
+- resolves both paths against the workspace root and rejects traversal outside it;
+- requires the source to exist;
+- **never overwrites**: if the destination already exists, the move is refused;
+- performs the move with `shutil.move` — no shell is involved;
+- is a mutation and requires the same approval as `write_file`.
+
+## `delete_path`
+
+Deletes a file or directory within the workspace.
+
+Arguments:
+
+```text
+relative_path: string
+recursive: boolean, default false
+```
+
+Behavior:
+
+- resolves the path against the workspace root and rejects traversal outside it;
+- refuses to delete the workspace root itself;
+- deletes files directly and requires `recursive=true` to delete a directory;
+- deletes with `Path.unlink` / `shutil.rmtree` — no shell is involved;
+- is a mutation and requires the same approval as `write_file`.
+
 ## `inspect_git_status`
 
 Runs:
@@ -202,7 +240,9 @@ timeout: optional integer >= 1
 
 Default timeout: 30 seconds.
 
-The result includes the command, stdout, stderr, and exit code.
+The result includes the command, stdout, stderr, exit code, and an explicit `TIMED_OUT: true|false` marker. When a command exceeds its timeout, the result reports `TIMED_OUT: true` and `EXIT_CODE: -1` with an explicit `ERROR: Command timed out after N seconds.` notice — the timeout is never inferred from an ambiguous exit code.
+
+Oversized stdout/stderr is bounded by a shared output cap: long output is truncated to keep its head and tail with an explicit `...(output truncated...)` marker, so the model never receives an unbounded result.
 
 Non-zero exit codes are returned as tool output rather than automatically converted into success.
 
