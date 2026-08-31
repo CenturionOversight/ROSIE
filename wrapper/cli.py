@@ -65,6 +65,14 @@ FALLBACK_MODELS: list[str] = [
 # Argument parser
 # ---------------------------------------------------------------------------
 
+def _positive_int(value: str) -> int:
+    """Parse a strictly positive integer for bounded CLI limits."""
+    parsed = int(value)
+    if parsed < 1:
+        raise argparse.ArgumentTypeError("value must be at least 1")
+    return parsed
+
+
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="wrapper",
@@ -109,7 +117,7 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--max-iterations",
-        type=int,
+        type=_positive_int,
         default=20,
         help="Maximum tool-calling iterations per turn (default 20).",
     )
