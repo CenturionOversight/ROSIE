@@ -4,25 +4,35 @@ Covers:
 - shared output bounding (head + tail + explicit marker)
 - the canonical, bounded shell-result format with the TIMED_OUT contract
 - subprocess executor timeout behavior (explicit TIMED_OUT, not exit-code inference)
-- the new move_path / delete_path filesystem tools (approval-gated, no shell)
+- the move_path / delete_path filesystem tools (approval-gated, no shell)
 - the dead-process-terminate import removal in peep_shell
 - the asynchronous RATTER sink (non-blocking enqueue, bounded queue)
 - ROSIE task_id correlation across RATTER events
+- the turn-scoped task context (contextvars set/reset, cleared after turn)
+- RATTER async flush/close lifecycle semantics
+- CLI PEEP executor lifecycle cleanup on all exit paths
 """
 from __future__ import annotations
 
+import sys
+import threading
+import time
 from pathlib import Path
-from unittest.mock import patch, MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 
 from wrapper.output_bounds import (
     DEFAULT_MAX_OUTPUT_CHARS,
-    TRUNCATION_MARKER,
     box_output,
     format_shell_result,
 )
 from wrapper.policy import ApprovalPolicy, ExecutionPolicy
+from wrapper.rt_context import (
+    get_current_task_id,
+    reset_current_task_id,
+    set_current_task_id,
+)
 
 
 @pytest.fixture
@@ -44,8 +54,7 @@ class TestBoxOutput:
     def test_long_text_bounded_with_marker(self):
         text = "x" * 200_000
         result = box_output(text)
-        assert TRUNCATION_MARKER in result
-        # The bounded result stays under the default bound.
+        assert "output truncated" in result
         assert len(result) <= DEFAULT_MAX_OUTPUT_CHARS
 
     def test_keeps_head_and_tail(self):
@@ -53,13 +62,13 @@ class TestBoxOutput:
         result = box_output(text, max_chars=200)
         assert result.startswith("A")
         assert result.endswith("ZZZZ")
-        assert TRUNCATION_MARKER in result
+        assert "output truncated" in result
 
     def test_custom_max_chars_respected(self):
         text = "y" * 5000
         result = box_output(text, max_chars=1000)
         assert len(result) <= 1000
-        assert TRUNCATION_MARKER in result
+        assert "output truncated" in result
 
 
 class TestFormatShellResult:
@@ -94,18 +103,61 @@ class TestFormatShellResult:
         assert "STDOUT:" in result
         assert "EXIT_CODE: 0" in result
         assert "TIMED_OUT: false" in result
-        assert TRUNCATION_MARKER in result
+        assert "output truncated" in result
+
+
+class TestTotalOutputBudget:
+    def test_total_formatted_length_respected(self):
+        """The 50k bound applies to the COMPLETE block, not per stream."""
+        result = format_shell_result(
+            "cmd",
+            stdout="A" * 200_000,
+            stderr="B" * 200_000,
+            exit_code=1,
+        )
+        assert len(result) <= DEFAULT_MAX_OUTPUT_CHARS
+
+    def test_truncation_reports_original_size(self):
+        result = format_shell_result(
+            "cmd", stdout="q" * 123_456, stderr="", exit_code=0
+        )
+        assert "original 123456 chars" in result
+
+    def test_both_streams_survive_truncation(self):
+        """Neither stdout nor stderr is starved entirely when both overflow."""
+        result = format_shell_result(
+            "cmd",
+            stdout="A" * 100_000,
+            stderr="B" * 5,
+            exit_code=2,
+        )
+        assert "original 100000 chars" in result
+        # Even a small stderr must remain visible (min share), so it keeps a tail.
+        assert "STDERR:" in result
+        # Structural fields always survive.
+        for marker in ("$ cmd", "EXIT_CODE: 2", "TIMED_OUT: false"):
+            assert marker in result
+
+    def test_timeout_error_line_survives_truncation(self):
+        result = format_shell_result(
+            "hang",
+            stdout="o" * 90_000,
+            stderr="",
+            exit_code=-1,
+            timed_out=True,
+            timeout_seconds=45,
+        )
+        assert "ERROR: Command timed out after 45 seconds." in result
+        assert "TIMED_OUT: true" in result
 
 
 class TestSubprocessTimeoutContract:
     def test_timeout_marks_timed_out_not_exit_inference(self, tmp_path, yolo, monkeypatch):
-        """On timeout the executor reports TIMED_OUT: true + ERROR, never relying on EXIT_CODE -1 alone."""
         from wrapper.tools import _default_shell_executor
         monkeypatch.setattr("wrapper.tools._workspace_root", tmp_path.resolve())
 
         result = _default_shell_executor("echo hi", timeout=1)
         if "TIMED_OUT:" in result:
-            # Fast command completed normally.
             assert "TIMED_OUT: false" in result
             return
 
@@ -215,7 +267,6 @@ class TestAsyncRatterSink:
         accepted = sink.send_peep_events([FakeEvent()], command_id="c1", task_id="t1")
         assert accepted is True
         remaining = sink.close(timeout=2.0)
-        # Event should have been forwarded to the inner sink in the background.
         assert inner.send_peep_events.call_count >= 1
         kwargs = inner.send_peep_events.call_args.kwargs
         assert kwargs["command_id"] == "c1"
@@ -232,21 +283,24 @@ class TestAsyncRatterSink:
 
         assert sink.send_peep_events([FakeEvent()]) is True
         assert sink.send_peep_events([FakeEvent()]) is True
-        # Third enqueue should be dropped because the queue is full.
         assert sink.send_peep_events([FakeEvent()]) is False
 
 
 class TestTaskCorrelation:
     def test_rt_context_set_and_get(self):
-        from wrapper.rt_context import (
-            get_current_task_id,
-            reset_current_task_id,
-            set_current_task_id,
-        )
         assert get_current_task_id() is None
         token = set_current_task_id("task_abc")
         assert get_current_task_id() == "task_abc"
         reset_current_task_id(token)
+        assert get_current_task_id() is None
+
+    def test_nested_set_reset_restores(self):
+        outer = set_current_task_id("task_outer")
+        inner = set_current_task_id("task_inner")
+        assert get_current_task_id() == "task_inner"
+        reset_current_task_id(inner)
+        assert get_current_task_id() == "task_outer"
+        reset_current_task_id(outer)
         assert get_current_task_id() is None
 
     def test_task_id_flows_into_ratter_event(self):
@@ -270,10 +324,49 @@ class TestTaskCorrelation:
         assert r["payload"]["rosie_command_id"] == "c1"
         assert r["command_id"] == "c1"
 
+    def test_cleared_after_normal_return(self):
+        token = set_current_task_id("task_turn")
+        try:
+            pass
+        finally:
+            reset_current_task_id(token)
+        assert get_current_task_id() is None
+
+    def test_cleared_after_exception(self):
+        token = set_current_task_id("task_turn")
+
+        def exploding():
+            raise RuntimeError("boom")
+
+        with pytest.raises(RuntimeError):
+            try:
+                exploding()
+            finally:
+                reset_current_task_id(token)
+        assert get_current_task_id() is None
+
+    def test_distinct_turns_get_distinct_ids(self):
+        from uuid import uuid4
+
+        ids = []
+
+        def capture():
+            ids.append(get_current_task_id())
+
+        for _ in range(2):
+            token = set_current_task_id(f"task_{uuid4().hex[:8]}")
+            try:
+                capture()
+            finally:
+                reset_current_task_id(token)
+
+        assert len(ids) == 2
+        assert ids[0] is not None and ids[1] is not None
+        assert ids[0] != ids[1]
+
     def test_run_turn_assigns_task_id(self, monkeypatch, tmp_path):
         from wrapper import tools as tools_mod
         tools_mod._workspace_root = tmp_path.resolve()
-        seen = {}
 
         from unittest.mock import MagicMock as _MM
         from wrapper.cli import main
@@ -281,7 +374,6 @@ class TestTaskCorrelation:
         captured_tids = []
 
         def fake_completion(models, messages, temperature):
-            from wrapper.rt_context import get_current_task_id
             captured_tids.append(get_current_task_id())
             resp = _MM()
             msg = _MM()
@@ -295,9 +387,355 @@ class TestTaskCorrelation:
              patch("wrapper.cli._completion", side_effect=fake_completion):
             main([str(tmp_path.resolve()), "say hi"])
 
-        from wrapper.rt_context import get_current_task_id
         # During the turn, a task id was present and shared with the completion call.
         assert captured_tids
         assert all(t is not None and t.startswith("task_") for t in captured_tids)
-        # After the turn finished, the context is restored to its previous value.
+        # After the turn finished, the context is cleared.
         assert get_current_task_id() is None
+
+    def test_background_ratter_captures_task_id(self):
+        from wrapper.ratter_async import AsyncRatterSink
+
+        inner = MagicMock()
+        sink = AsyncRatterSink(sink=inner, auto_start=True)
+
+        class FakeEvent:
+            event_type = "command.observed"
+
+        try:
+            token = set_current_task_id("task_captured")
+            try:
+                sink.send_peep_events(
+                    [FakeEvent()], command_id="c1", task_id="task_captured"
+                )
+            finally:
+                reset_current_task_id(token)
+            assert get_current_task_id() is None
+            assert sink.flush(timeout=2.0) is True
+            kwargs = inner.send_peep_events.call_args.kwargs
+            assert kwargs["task_id"] == "task_captured"
+        finally:
+            sink.close(timeout=2.0)
+
+
+# ---------------------------------------------------------------------------
+# RATTER async flush/close lifecycle
+# ---------------------------------------------------------------------------
+
+class _ImmediateSink:
+    def __init__(self):
+        self.calls = []
+
+    def send_peep_events(self, events, command_id=None, task_id=None):
+        self.calls.append((list(events), command_id, task_id))
+        return True
+
+
+class _BlockingSink:
+    def __init__(self, gate):
+        self.gate = gate
+        self.started = threading.Event()
+
+    def send_peep_events(self, events, command_id=None, task_id=None):
+        self.started.set()
+        self.gate.wait(10)
+
+
+class _RaisingSink:
+    def send_peep_events(self, events, command_id=None, task_id=None):
+        raise RuntimeError("send failed")
+
+
+def _fake_event(event_type="command.observed"):
+    class FakeEvent:
+        pass
+
+    ev = FakeEvent()
+    ev.event_type = event_type
+    return ev
+
+
+class TestRatterFlush:
+    def test_flush_empty_returns_true_immediately(self):
+        from wrapper.ratter_async import AsyncRatterSink
+        sink = AsyncRatterSink(auto_start=False)
+        assert sink.flush(timeout=0.0) is True
+
+    def test_flush_drains_queued_events(self):
+        from wrapper.ratter_async import AsyncRatterSink
+        sink = AsyncRatterSink(sink=_ImmediateSink(), auto_start=True)
+        try:
+            assert sink.send_peep_events([_fake_event()], command_id="c1", task_id="t1") is True
+            assert sink.send_peep_events([_fake_event()], command_id="c2", task_id="t1") is True
+            assert sink.flush(timeout=2.0) is True
+            assert len(sink._sink.calls) == 2
+        finally:
+            sink.close(timeout=2.0)
+
+    def test_flush_leaves_worker_alive(self):
+        from wrapper.ratter_async import AsyncRatterSink
+        sink = AsyncRatterSink(sink=_ImmediateSink(), auto_start=True)
+        try:
+            sink.send_peep_events([_fake_event()])
+            assert sink.flush(timeout=2.0) is True
+            worker = sink._worker
+            assert worker is not None and worker.is_alive()
+            sink.send_peep_events([_fake_event()])
+            assert sink.flush(timeout=2.0) is True
+            assert len(sink._sink.calls) == 2
+        finally:
+            sink.close(timeout=2.0)
+
+    def test_flush_is_bounded_when_worker_blocked(self):
+        from wrapper.ratter_async import AsyncRatterSink
+        gate = threading.Event()
+        sink = AsyncRatterSink(sink=_BlockingSink(gate), auto_start=True)
+        try:
+            sink.send_peep_events([_fake_event()])
+            assert sink._sink.started.wait(2.0), "worker did not start processing"
+            start = time.monotonic()
+            drained = sink.flush(timeout=0.2)
+            elapsed = time.monotonic() - start
+            assert drained is False
+            assert elapsed < 5.0, "flush blocked indefinitely"
+        finally:
+            gate.set()
+            sink.close(timeout=2.0)
+
+    def test_send_failure_still_marks_done(self):
+        from wrapper.ratter_async import AsyncRatterSink
+        sink = AsyncRatterSink(sink=_RaisingSink(), auto_start=True)
+        try:
+            sink.send_peep_events([_fake_event()])
+            assert sink.flush(timeout=2.0) is True
+        finally:
+            sink.close(timeout=2.0)
+
+    def test_no_deadlock_under_concurrent_enqueue_and_flush(self):
+        from wrapper.ratter_async import AsyncRatterSink
+        sink = AsyncRatterSink(sink=_ImmediateSink(), auto_start=True)
+        try:
+            stop = threading.Event()
+
+            def producer():
+                i = 0
+                while not stop.is_set():
+                    sink.send_peep_events([_fake_event()], command_id="c%d" % i)
+                    i = (i + 1) % 1000
+
+            t = threading.Thread(target=producer, daemon=True)
+            t.start()
+            try:
+                for _ in range(5):
+                    sink.flush(timeout=0.1)
+            finally:
+                stop.set()
+            t.join(timeout=2.0)
+        finally:
+            sink.close(timeout=2.0)
+
+
+class TestRatterClose:
+    def test_close_flushes_then_stops_worker(self):
+        from wrapper.ratter_async import AsyncRatterSink
+        sink = AsyncRatterSink(sink=_ImmediateSink(), auto_start=True)
+        sink.send_peep_events([_fake_event()], command_id="c1", task_id="t1")
+        drained = sink.close(timeout=2.0)
+        assert drained is True
+        assert len(sink._sink.calls) == 1
+        assert sink._sink.calls[0][1] == "c1"
+        assert sink._sink.calls[0][2] == "t1"
+        worker = sink._worker
+        assert worker is not None and not worker.is_alive()
+
+    def test_close_is_bounded_when_worker_blocked(self):
+        from wrapper.ratter_async import AsyncRatterSink
+        gate = threading.Event()
+        sink = AsyncRatterSink(sink=_BlockingSink(gate), auto_start=True)
+        try:
+            sink.send_peep_events([_fake_event()])
+            assert sink._sink.started.wait(2.0)
+            start = time.monotonic()
+            drained = sink.close(timeout=0.2)
+            elapsed = time.monotonic() - start
+            assert drained is False
+            assert elapsed < 5.0, "close blocked indefinitely"
+        finally:
+            gate.set()
+
+    def test_close_is_idempotent(self):
+        from wrapper.ratter_async import AsyncRatterSink
+        sink = AsyncRatterSink(sink=_ImmediateSink(), auto_start=True)
+        sink.send_peep_events([_fake_event()])
+        first = sink.close(timeout=2.0)
+        second = sink.close(timeout=2.0)
+        assert first is True
+        assert second is True
+
+    def test_send_after_close_returns_false(self):
+        from wrapper.ratter_async import AsyncRatterSink
+        sink = AsyncRatterSink(sink=_ImmediateSink(), auto_start=True)
+        sink.close(timeout=2.0)
+        assert sink.send_peep_events([_fake_event()]) is False
+
+    def test_close_logs_unsent_telemetry(self, caplog):
+        from wrapper.ratter_async import AsyncRatterSink
+        gate = threading.Event()
+        sink = AsyncRatterSink(sink=_BlockingSink(gate), auto_start=True)
+        try:
+            sink.send_peep_events([_fake_event()])
+            assert sink._sink.started.wait(2.0)
+            with caplog.at_level("WARNING"):
+                drained = sink.close(timeout=0.05)
+            assert drained is False
+            assert any(
+                "not forwarded during shutdown" in r.message for r in caplog.records
+            )
+        finally:
+            gate.set()
+
+    def test_close_never_raises_with_failing_inner(self):
+        from wrapper.ratter_async import AsyncRatterSink
+        sink = AsyncRatterSink(sink=_RaisingSink(), auto_start=True)
+        sink.send_peep_events([_fake_event()])
+        sink.close(timeout=2.0)
+        sink.close(timeout=2.0)
+
+
+# ---------------------------------------------------------------------------
+# CLI PEEP executor lifecycle cleanup
+# ---------------------------------------------------------------------------
+
+def _noop_tool_completion(models, messages, temperature):
+    resp = MagicMock()
+    msg = MagicMock()
+    msg.content = "ok"
+    msg.tool_calls = None
+    resp.choices = [MagicMock()]
+    resp.choices[0].message = msg
+    return resp
+
+
+def _install_fake_executor(monkeypatch, close_calls=None):
+    import wrapper.cli as cli
+
+    if close_calls is None:
+        close_calls = []
+
+    executor = MagicMock()
+    executor.close.side_effect = lambda *a, **k: close_calls.append("closed")
+
+    def fake_configure(root):
+        cli._peep_executor = executor
+        return "peep=attached"
+
+    monkeypatch.setattr(cli, "_configure_peep_executor", fake_configure)
+    monkeypatch.setattr(cli, "_completion", _noop_tool_completion)
+    return executor, close_calls
+
+
+class TestCliCloseHelper:
+    def test_close_peep_executor_noop_when_unconfigured(self, monkeypatch):
+        import wrapper.cli as cli
+        monkeypatch.setattr(cli, "_peep_executor", None)
+        cli._close_peep_executor()
+
+    def test_close_peep_executor_with_fake_executor(self, monkeypatch):
+        import wrapper.cli as cli
+        fake = MagicMock()
+        monkeypatch.setattr(cli, "_peep_executor", fake)
+        cli._close_peep_executor()
+        assert fake.close.call_count == 1
+        assert cli._peep_executor is None
+
+    def test_close_peep_executor_swallows_executor_error(self, monkeypatch):
+        import wrapper.cli as cli
+        fake = MagicMock()
+        fake.close.side_effect = RuntimeError("boom")
+        monkeypatch.setattr(cli, "_peep_executor", fake)
+        cli._close_peep_executor()
+        assert cli._peep_executor is None
+
+
+class TestCliCloseOnExit:
+    def test_one_shot_closes_executor(self, monkeypatch, tmp_path):
+        import wrapper.cli as cli
+        executor, calls = _install_fake_executor(monkeypatch)
+        rc = cli.main([str(tmp_path.resolve()), "do the thing"])
+        assert rc == 0
+        assert executor.close.call_count == 1
+        assert calls == ["closed"]
+        assert cli._peep_executor is None
+
+    def test_piped_closes_executor(self, monkeypatch, tmp_path):
+        import wrapper.cli as cli
+        executor, calls = _install_fake_executor(monkeypatch)
+
+        class FakeStdin:
+            def isatty(self):
+                return False
+
+            def read(self):
+                return "piped prompt"
+
+        monkeypatch.setattr(sys, "stdin", FakeStdin())
+        rc = cli.main([str(tmp_path.resolve())])
+        assert rc == 0
+        assert executor.close.call_count == 1
+
+    def test_interactive_exit_closes_executor(self, monkeypatch, tmp_path):
+        import wrapper.cli as cli
+        import builtins
+
+        executor, calls = _install_fake_executor(monkeypatch)
+
+        class FakeStdin:
+            def isatty(self):
+                return True
+
+        monkeypatch.setattr(sys, "stdin", FakeStdin())
+        inputs = iter(["exit"])
+        monkeypatch.setattr(builtins, "input", lambda *a, **k: next(inputs))
+
+        rc = cli.main([str(tmp_path.resolve())])
+        assert rc == 0
+        assert executor.close.call_count == 1
+
+    def test_exception_path_still_closes_executor(self, monkeypatch, tmp_path):
+        import wrapper.cli as cli
+        executor, calls = _install_fake_executor(monkeypatch)
+
+        def exploding_completion(models, messages, temperature):
+            raise RuntimeError("model failed")
+
+        monkeypatch.setattr(cli, "_completion", exploding_completion)
+        with pytest.raises(RuntimeError):
+            cli.main([str(tmp_path.resolve()), "will explode"])
+        assert executor.close.call_count == 1
+
+
+class TestCliConfigureOnce:
+    def test_configure_records_executor_and_close_releases(self, monkeypatch):
+        import wrapper.cli as cli
+        fake = MagicMock()
+        with patch(
+            "wrapper.peep_shell.PeepShellExecutor", return_value=fake
+        ) as ctor:
+            status = cli._configure_peep_executor("workspace")
+            assert ctor.call_count == 1
+        assert status == "peep=attached"
+        assert cli._peep_executor is fake
+        cli._close_peep_executor()
+        assert fake.close.call_count == 1
+        assert cli._peep_executor is None
+
+    def test_fallback_config_leaves_no_executor_to_close(self, monkeypatch):
+        import wrapper.cli as cli
+        with patch(
+            "wrapper.peep_shell.PeepShellExecutor",
+            side_effect=ImportError("PEEP not installed"),
+        ):
+            status = cli._configure_peep_executor("workspace")
+        assert "peep=unavailable" in status
+        assert cli._peep_executor is None
+        cli._close_peep_executor()
