@@ -1,350 +1,299 @@
 # Architecture
 
-ROSIE is a small local-first agent runtime. The model reasons, ROSIE mediates tool execution, and the workspace is the target environment.
+ROSIE is the local-machine bridge/runtime in the HACKASS software-construction stack.
 
-## Execution flow
+Its architectural responsibility is locality: translate authorized engineering work into operations on the machine where the project, repository, shell, and tools actually live.
+
+## Product architecture
+
+```text
+Human
+  ↓
+HACKASS
+  human intent / conversation / product decisions
+  ↓
+ARCHESTRATOR
+  engineering plan / work / execution state / verification
+  ↓
+ROSIE
+  local-machine translation / authority boundary / controlled action
+  ↓
+Local machine
+  files / Git / shell / tools / runtime
+```
+
+These responsibilities are intentionally separate.
+
+### HACKASS
+
+HACKASS is the user-facing program.
+
+The user communicates with HACKASS in ordinary language. HACKASS carries product intent and material user decisions into the engineering stack.
+
+### ARCHESTRATOR
+
+ARCHESTRATOR is the engineering engine.
+
+It manages the structured engineering process around approved intent: plans, work, execution state, verification, persistence, continuation, and the record of what actually happened.
+
+### ROSIE
+
+ROSIE is the local-machine bridge/runtime.
+
+It does not decide what product the user wants and does not replace ARCHESTRATOR's engineering lifecycle. It provides the controlled path from authorized engineering work to machine operations.
+
+## Current implementation boundary
+
+The current repository contains a standalone local ROSIE runtime plus the Google hackathon integration used to demonstrate HACKASS.
+
+The standalone runtime can itself call a model and iterate through tools. That is a useful operating and development mode, but it does not redefine the product boundary: in the broader architecture, ROSIE's durable responsibility is the local side of execution.
+
+## Standalone local execution flow
 
 ```mermaid
 flowchart TD
-    U[User / CLI] --> C[wrapper.cli]
+    U[Local operator / CLI] --> C[wrapper.cli]
     C --> M[LiteLLM completion]
     M --> L{Tool calls?}
     L -- No --> R[Final text response]
     L -- Yes --> D[dispatch_tool]
     D --> V[Pydantic argument validation]
     V --> P[Approval policy when required]
-    P --> T[ROSIE tool]
+    P --> T[ROSIE local tool]
     T --> W[Local workspace / shell / Git]
     W --> O[Tool result]
     O --> C
 ```
 
-## Main modules
+This flow is the current standalone implementation of ROSIE's local action surface.
+
+## Main local modules
 
 ### `wrapper/cli.py`
 
-Owns the command-line interface and agent loop.
+Owns the standalone CLI and local iterative loop.
 
-Responsibilities:
+Responsibilities include:
 
-- parse CLI arguments;
-- establish the workspace root;
-- choose approval mode;
-- construct the model fallback chain;
-- call LiteLLM;
-- pass tool schemas to the model;
-- execute iterative tool-call resolution;
-- preserve conversation and tool-result state during a session;
-- stop on a final model response or iteration limit.
-
-The main loop is `_resolve_tool_calls()`.
+- parsing CLI arguments;
+- establishing the workspace root;
+- choosing approval mode;
+- constructing the standalone model chain;
+- passing local tool schemas to the model;
+- resolving iterative tool calls;
+- preserving conversation and tool-result state during a session; and
+- stopping on a final response or iteration limit.
 
 ### `wrapper/tools.py`
 
-Owns the local execution layer.
+Owns the local action layer.
 
-Responsibilities:
+Responsibilities include:
 
 - workspace-root state;
-- safe path resolution for file tools;
+- safe path resolution for bounded file tools;
 - Pydantic argument models;
-- tool registry;
-- OpenAI-format tool schemas;
-- tool dispatch;
+- tool registry and dispatch;
+- directory and workspace search;
 - file inspection;
 - write previews;
 - file writes;
-- targeted patches (`apply_patch`);
-- Git status / diff / log inspection;
+- targeted patches;
+- Git status / diff / log inspection; and
 - shell execution.
 
 ### `wrapper/policy.py`
 
-Owns mutating-action approval behavior.
+Owns mutating-action approval behavior for the local side.
 
-It defines the three execution modes:
+Modes:
 
 - `ask`
 - `auto-write`
 - `yolo`
 
-Approval is enforced inside the mutating tools rather than only at the CLI boundary.
+Approval is enforced close to the mutating local action rather than relying only on model instructions.
 
-## Agent loop
+### `wrapper/system_prompt.py`
 
-Every standalone conversation is seeded once with a compact operating system
-prompt (`wrapper/system_prompt.py`, `ROSIE_SYSTEM_PROMPT`) prepended as the
-leading `system` message. The context compactor always preserves this message,
-so it is present for one-shot, piped, and interactive sessions and never
-appears duplicated across turns. It is a plain string — never derived from
-another LLM call.
+Provides the compact standalone ROSIE operating prompt. It tells the local model to inspect before modifying, prefer native/read-only inspection tools, never invent results, and only claim verified work.
 
-PEEP is initialized exactly once per CLI startup: `main()` calls
-`_configure_peep_executor(root)` a single time and reports the result
-(`peep=attached` or `peep=unavailable fallback=subprocess reason=<...>`) in
-the startup banner. On any PEEP failure ROSIE falls back to the default
-subprocess shell executor and remains fully usable.
+### PEEP integration
 
-For each user turn:
+The standalone runtime can attach PEEP as the shell observation path. If PEEP is unavailable, ROSIE reports the fallback and continues with the subprocess executor.
 
-1. The user message is appended to the `messages` list.
-2. `_resolve_tool_calls()` calls `_completion()`.
-3. `_completion()` calls `litellm.completion()` with the conversation and `TOOL_SCHEMAS`.
-4. If the model returns no tool calls, the returned content becomes the final response.
-5. If the model returns tool calls, ROSIE records the assistant tool-call message.
-6. Each tool call is JSON-decoded and passed to `dispatch_tool()`.
-7. `dispatch_tool()` validates arguments with the associated Pydantic model.
-8. The selected tool executes.
-9. The textual tool result is appended to the conversation with its tool-call ID.
-10. The model receives the updated conversation and can select another action.
-11. The cycle repeats until completion or `max_iterations` is exhausted.
+PEEP is observation around execution; it does not replace ROSIE's locality role or ARCHESTRATOR's engineering responsibility.
 
-The default iteration cap is 20.
+## Local tool boundary
 
-## Model boundary
-
-ROSIE does not directly implement individual model APIs. LiteLLM is the provider abstraction.
-
-Current default:
-
-```text
-ollama/qwen2.5-coder:7b
-```
-
-Current fallback models:
-
-```text
-openrouter/deepseek/deepseek-chat
-ollama/qwen2.5-coder:7b
-```
-
-The agent loop itself is provider-independent as long as the selected model/provider supports the tool-calling format used by LiteLLM.
-
-## Tool boundary
+The current local tool registry exposes bounded workspace discovery and file operations plus Git inspection and shell execution.
 
 `TOOL_REGISTRY` maps tool names to executable Python functions.
 
 `TOOL_MODELS` maps tool names to Pydantic request models.
 
-`TOOL_SCHEMAS` is generated from those definitions and passed to LiteLLM in OpenAI-compatible function-tool format.
+`TOOL_SCHEMAS` provides the model-visible tool contracts.
 
-This keeps model-visible schemas and executable functions tied to a single registry/validation boundary.
+`dispatch_tool()` is the central execution entry point.
 
 ## Workspace boundary
 
-The explicit file tools resolve paths against a configured workspace root and reject resolved paths outside that root.
+Explicit file and workspace tools resolve paths against a configured workspace root and reject traversal outside it.
 
-This applies to:
+This applies to bounded operations such as:
 
-- `inspect_file`
-- `preview_write_file`
-- `write_file`
-- `apply_patch`
+- directory listing and search;
+- file inspection;
+- write previews;
+- file writes;
+- targeted patches; and
+- path-filtered Git inspection.
 
-`inspect_git_status`, `inspect_git_diff`, and `inspect_git_log` operate in the
-workspace root; when a `relative_path` is supplied to the diff/log tools it is
-validated against the workspace root first.
+Shell execution is different: the workspace is its starting directory, not an OS-level sandbox. A command may access anything permitted to the operating-system identity running ROSIE.
 
-`inspect_git_status` operates in the workspace root.
-
-`run_shell` starts in the workspace root but is not a filesystem sandbox. Shell commands can reference paths outside the workspace if the operating system permits it. See [SECURITY.md](SECURITY.md).
+See [SECURITY.md](SECURITY.md).
 
 ## Approval boundary
 
-Mutating operations enforce policy at execution time:
+Mutating local operations enforce the active policy at execution time.
 
-- `write_file` checks approval before writing;
-- `apply_patch` checks approval before patching (same policy as `write_file`);
-- `run_shell` checks approval before executing.
+That boundary matters because ROSIE is the layer where requested engineering work crosses into actual machine authority.
 
-This means callers that use ROSIE's registered tool functions still pass through the existing approval layer when a policy has been installed.
+See [APPROVAL_MODES.md](APPROVAL_MODES.md).
+
+## Standalone model boundary
+
+The standalone CLI currently uses LiteLLM as a provider abstraction.
+
+That is an implementation detail of standalone ROSIE operation, not a requirement that ROSIE own reasoning in the complete HACKASS stack.
+
+In the hackathon path, Google ADK and Gemini provide the reasoning/framework path while local actions are delegated into the incorporated execution surface.
 
 ## State
 
-ROSIE currently keeps session state in process memory:
+The current standalone ROSIE runtime keeps local session state in process memory, including:
 
 - conversation messages;
 - current approval mode;
-- workspace root;
-- active model chain.
+- workspace root; and
+- active standalone model chain.
 
-There is currently no database, remote state store, queue, or cloud runtime in the core repository.
+The local core does not currently require a database, queue, or remote state store.
 
-## Current external integration seam
+## Integration seams
 
-The principal integration points are:
+Important local integration points include:
 
-- `_completion()` — model invocation boundary;
-- `_resolve_tool_calls()` — agent orchestration loop;
-- `TOOL_SCHEMAS` — model-visible tool contract;
-- `TOOL_REGISTRY` / `dispatch_tool()` — execution contract;
-- `ApprovalPolicy` — human authorization boundary.
+- local model invocation in standalone mode;
+- the iterative tool resolution loop;
+- model-visible tool schemas;
+- tool registry / dispatch;
+- approval policy; and
+- the workspace boundary.
 
-These seams allow an external agent framework to be added without automatically requiring replacement of the underlying local tools or approval implementation.
+These seams allow higher-level systems to use ROSIE's local action surface without requiring ROSIE to become the higher-level product or engineering engine.
 
-## HTTP boundary
+# HACKASS hackathon integration
 
-`server.py` provides a narrow, portable HTTP entry point around ROSIE. It uses only the Python standard library (`http.server`) and does not depend on any Google-specific runtime APIs.
+The repository also contains hackathon-created code that integrates Google ADK and Gemini with the incorporated ARCHESTRATOR/local execution foundation.
 
-The server binds to the `PORT` environment variable (default 8080), which is how Cloud Run and other container runtimes supply the listening port.
+## Hackathon-facing execution chain
 
-### Architecture layers
+The current deployed path is:
 
 ```text
-public/                     frontend assets (static files)
+Browser / HACKASS interface
   ↓
-Firebase Hosting            static frontend host / proxy
-  ↓ (/health, /execute)
-Cloud Run                   container host
+Firebase Hosting
   ↓
-server.py                   HTTP boundary (stdlib http.server)
-  ↓ (/health or /execute)
-wrapper/                    ROSIE core agent loop and tools
+Cloud Run
   ↓
-LiteLLM                     model-provider abstraction
+server.py / POST /execute
+  ↓
+HACKASS run_hackass()
+  ↓
+Google ADK
+  ↓
+Gemini 3.7 Flash / Vertex AI
+  ↓
+HACKASS bridge
+  ↓
+incorporated ARCHESTRATOR tool layer
+  ↓
+workspace available to the deployed runtime
+  ↓
+result returned to HACKASS/browser
 ```
 
-### Google-specific boundary
+This path demonstrates HACKASS, Google ADK, Gemini, and real tool execution.
 
-Google is the temporary deployment target, not the architecture. The following components are Google-specific and removable:
+It should not be confused with a completed web-to-an-external-user-machine transport.
 
-- **Firebase Hosting** — temporary frontend host; can be replaced with any static web host.
-- **Cloud Run** — temporary container host; the same container runs on any container platform.
-- **Artifact Registry** — temporary container image registry.
+## Locality distinction
 
-ROSIE's core (`wrapper/`) contains no Google-specific code. Google-specific agent/framework integration (Google ADK, Gemini via Vertex AI) is added through a narrow adapter in the `hackass/` package, which `server.py` calls — Google-specific code is not fused into ROSIE's core.
+A Cloud Run container has a local filesystem of its own. Executing tools inside that container proves real execution in the deployed runtime, but it does not prove that the cloud application can directly operate a separate user's laptop or desktop.
 
-## Cloud Run deployment
+ROSIE's product architecture fills that locality boundary:
+
+```text
+Web-side HACKASS / ARCHESTRATOR
+  ↓
+verified ROSIE connection
+  ↓
+ROSIE process on user's machine
+  ↓
+user's authorized local workspace and tools
+```
+
+That web-to-user-machine path must only be described as live once the ROSIE connection/transport is actually implemented, attached, and verified.
+
+Until then, the hackathon deployment should be described factually as operating on the workspace available to its deployed runtime.
+
+## Provenance boundary
+
+For the Google All Things Agentic submission:
+
+- **HACKASS** — newly created hackathon user-facing project/integration.
+- **ARCHESTRATOR** — pre-existing engineering/execution software incorporated into the submission and disclosed.
+- **ROSIE** — local-machine bridge/runtime product role represented by the local execution surface in this repository.
+
+The hackathon repository temporarily colocates implementation from these responsibilities. Colocation does not make the responsibilities identical.
+
+## Hackathon-created Google integration
+
+The `hackass/` package contains the hackathon-specific Google path:
+
+- `hackass/config.py` — Gemini / Vertex configuration;
+- `hackass/agent.py` — Google ADK agent factory and runner;
+- `hackass/bridge.py` — ADK-to-existing-tool adapter;
+- `hackass/run.py` — hackathon CLI entry point.
+
+The bridge delegates actions into the existing tool dispatch layer rather than duplicating the file, Git, shell, and approval behavior.
+
+## Google Cloud deployment
+
+Current hackathon deployment:
 
 | Field | Value |
-|-------|-------|
-| Service name | `rosie-api` |
-| Region | `us-central1` |
-| Project | `rosie-fire` |
-| Image | `us-central1-docker.pkg.dev/rosie-fire/rosie-images/rosie-api` |
-| URL | `https://rosie-api-rqcuxs7u6a-uc.a.run.app` |
-| Health endpoint | `GET /health` |
-| Container port | 8080 |
+|---|---|
+| Service | `rosie-api` |
+| Cloud Run region | `us-central1` |
+| Google Cloud project | `rosie-fire` |
+| Gemini model | `gemini-3.7-flash` |
+| Vertex location | `global` |
+| Hosting | Firebase Hosting |
+| Container registry | Artifact Registry |
 
-### Container
+Firebase Hosting serves the static browser surface and proxies `/health` and `/execute` to Cloud Run.
 
-- Base image: `python:3.14-slim`
-- No embedded credentials
-- No local `.env` or `.venv` copied into the image
-- Runs as non-root user `rosie`
+The Google deployment is a hackathon infrastructure choice. ROSIE's local-machine role is not conceptually tied to Google Cloud.
 
-### Routing
+## Architectural rule of thumb
 
-Firebase Hosting routes `/health` and `/execute` to Cloud Run via the `run` rewrite in `firebase.json`. All other paths serve static files from `public/`. There is no Firebase Functions dependency.
-
-## Frontend boundary
-
-`public/` contains the static web interface served directly by Firebase Hosting. The application shell is plain HTML/CSS/JavaScript (no framework).
-
-### Current boundary
-
-```
-Browser → Firebase Hosting → /health + POST /execute → Cloud Run → server.py → HACKASS → Google ADK → Gemini 3.5+ → ARCHESTRATOR → tools/actions → HACKASS → Browser
-```
-
-The browser interface includes an enabled input area that submits tasks via `POST /execute`. Backend health polling via `GET /health` remains independent of execution.
-
-### HACKASS browser execution path
-
-The `hackass/` package and `server.py` together provide a browser-accessible execution path:
+When describing the system, use the responsibility chain rather than the repository layout:
 
 ```text
-Browser                              user submits a task
-  ↓
-Firebase Hosting                     static host + proxy
-  ↓ (POST /execute rewrite)
-Cloud Run (rosie-api)                container host
-  ↓
-server.py                            HTTP boundary (stdlib http.server)
-  ↓                                  POST /execute handler
-  ↓                                  validates request body
-  ↓                                  acquires _EXECUTION_LOCK
-  ↓
-hackass.agent.run_hackass()          hackathon-created runner
-  ↓
-Google ADK (LlmAgent)                hackathon-created execution framework
-  ↓
-Gemini 3.5+ (Vertex AI)              hackathon-created model provider
-  ↓
-hackass.bridge.py                    hackathon-created adapter (thin wrappers)
-  ↓
-wrapper.tools.dispatch_tool()        ARCHESTRATOR (pre-existing, disclosed)
-  ↓
-ARCHESTRATOR tools                   file/shell/Git execution
-  ↓
-workspace                            local filesystem
+HACKASS      = the human talks here
+ARCHESTRATOR = engineering is managed here
+ROSIE        = authorized work reaches the local machine here
 ```
-
-Workspace and approval policy are configured server-side. The browser supplies only the prompt.
-
-### Concurrency strategy
-
-ARCHESTRATOR manages workspace root and approval policy through module-level globals in `wrapper/tools.py`. Concurrent `/execute` requests would race on that shared state. A `threading.Lock` (`_EXECUTION_LOCK`) in `server.py` serializes `/execute` requests — the smallest appropriate server-side mechanism that prevents concurrent state mutation without redesigning ARCHESTRATOR's state model.
-
-## HACKASS Google ADK integration
-
-The `hackass/` package contains hackathon-created code that integrates Google ADK and Gemini 3.5+ into the ROSIE execution path.
-
-### Architecture layers
-
-```text
-Google ADK (LlmAgent)           hackathon-created execution framework
-  ↓
-Gemini 3.5+ (Vertex AI)         hackathon-created model provider
-  ↓
-hackass/bridge.py               hackathon-created adapter (thin wrappers)
-  ↓
-wrapper/tools.py                ARCHESTRATOR (pre-existing, disclosed)
-  ↓
-LiteLLM provider/fallback       ARCHESTRATOR model abstraction
-```
-
-### Provenance boundary
-
-| Component | Origin | File |
-|-----------|--------|------|
-| `wrapper/cli.py` | Pre-existing (ARCHESTRATOR) | disclosed |
-| `wrapper/tools.py` | Pre-existing (ARCHESTRATOR) | disclosed |
-| `wrapper/policy.py` | Pre-existing (ARCHESTRATOR) | disclosed |
-| `hackass/config.py` | Hackathon-created (HACKASS) | Gemini 3.5+ configuration |
-| `hackass/bridge.py` | Hackathon-created (HACKASS) | ADK ↔ ARCHESTRATOR adapter |
-| `hackass/agent.py` | Hackathon-created (HACKASS) | ADK agent factory + runner |
-| `hackass/run.py` | Hackathon-created (HACKASS) | CLI entry point |
-
-The adapter functions in `hackass/bridge.py` delegate to the existing `wrapper.tools.dispatch_tool()` — they do not duplicate file, shell, or Git logic. The ARCHESTRATOR tool layer, approval policy, and workspace-security semantics remain unchanged and are honored by the bridge.
-
-### Model configuration
-
-| Field | Value |
-|-------|-------|
-| Model | `gemini-3.7-flash` |
-| Provider | Vertex AI API (`aiplatform.googleapis.com`) |
-| Project | `rosie-fire` |
-| Region | `global` |
-| Auth | Application Default Credentials (ADC) |
-
-### Verified execution
-
-Real execution has been verified both locally and end-to-end through the HTTP boundary:
-
-**Local CLI execution:**
-1. ADK `LlmAgent` created with `gemini-3.7-flash` model;
-2. Agent requested `inspect_file(relative_path="README.md")`;
-3. Bridge adapter called `wrapper.tools.dispatch_tool("inspect_file", ...)`;
-4. ARCHESTRATOR read the file and returned content;
-5. Gemini produced final response: "ROSIE is a Python-based agentic command-line interface...";
-
-**HTTP/browser execution:**
-1. `POST /execute` with `{"prompt": "Inspect the README.md file and tell me what ROSIE is."}`;
-2. `server.py` handler validated the request and called `run_hackass()`;
-3. ADK invoked Gemini 3.5+;
-4. Agent requested `inspect_file(relative_path="README.md")`;
-5. ARCHESTRATOR `dispatch_tool` read the file;
-6. Gemini produced final response quoting README.md content;
-7. Result returned as `{"status": "ok", "result": "..."}` HTTP response;
-8. Cloud Run service remained healthy throughout.
