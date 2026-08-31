@@ -1,6 +1,10 @@
 # Tools
 
-ROSIE currently exposes ten model-callable tools. Tool arguments are validated with Pydantic before execution.
+ROSIE is the local-machine bridge/runtime. This document describes the current **local action surface** it exposes to an attached or standalone reasoning system.
+
+The current runtime exposes ten model-callable local tools. Tool arguments are validated with Pydantic before execution.
+
+These tools do not make ROSIE the HACKASS user interface or the ARCHESTRATOR engineering engine. They are the machine-side capabilities through which authorized work can reach a workspace.
 
 ## `list_directory`
 
@@ -40,19 +44,13 @@ Behavior:
 
 - searches relative file paths and text contents;
 - content hits return `path:line:text`;
-- path-name hits return the relative path — and do **not** suppress content
-  hits from the same file (a path match is still content-searched);
+- path-name hits return the relative path and do not suppress content hits from the same file;
 - resolves the sub-directory against the workspace root;
 - rejects traversal outside the workspace;
-- skips binary files, files larger than 1 MiB, and ignored directories
-  (`.git`, `.venv`, `venv`, `node_modules`, `__pycache__`, `.pytest_cache`);
-- scanning is budget-bounded: files are examined in deterministic (sorted)
-  order until `max_results` matches are found, the subtree is exhausted, or
-  `max_files` files have been examined;
-- when `max_files` is reached before the subtree is exhausted, a trailing
-  `(search truncated after N files; increase max_files to continue)` notice is
-  appended so a partial result is never silently presented as exhaustive;
-- stops at `max_results`.
+- skips binary files, files larger than 1 MiB, and ignored directories (`.git`, `.venv`, `venv`, `node_modules`, `__pycache__`, `.pytest_cache`);
+- scans in deterministic sorted order;
+- stops when `max_results` matches are found, the subtree is exhausted, or `max_files` files have been examined;
+- marks truncation explicitly when the file budget is exhausted.
 
 ## `inspect_file`
 
@@ -116,8 +114,7 @@ Approval behavior is documented in [APPROVAL_MODES.md](APPROVAL_MODES.md).
 
 ## `apply_patch`
 
-Applies a small targeted edit to an existing UTF-8 text file without
-regenerating the whole file.
+Applies a small targeted edit to an existing UTF-8 text file without regenerating the whole file.
 
 Arguments:
 
@@ -129,17 +126,13 @@ new_text: string
 
 Behavior:
 
-1. validates the path against the workspace root (rejects traversal);
+1. validates the path against the workspace root;
 2. requires the file to already exist and be UTF-8 text;
-3. `old_text` must occur **exactly once** — if it matches zero times it
-   returns an error and leaves the file unchanged; if it matches more than
-   once it returns an ambiguity error (telling the model to supply a
-   larger/more-specific `old_text`) and leaves the file unchanged;
-4. uses exact string matching only — no fuzzy matching and no line-position
-   guessing;
+3. requires `old_text` to occur exactly once;
+4. uses exact string matching only;
 5. generates and displays a unified diff before mutating;
 6. requests approval using the same policy as `write_file`;
-7. if denied, the file is not modified;
+7. leaves the file unchanged if approval is denied; and
 8. replaces only the exact matched text.
 
 ## `inspect_git_status`
@@ -152,15 +145,7 @@ git status --short
 
 inside the workspace root.
 
-It is read-only from ROSIE's perspective and does not require approval.
-
-Possible results include:
-
-- clean working tree;
-- raw short-status output;
-- Git unavailable;
-- non-repository/error response;
-- timeout.
+It is read-only from ROSIE's local-action perspective and does not require approval.
 
 ## `inspect_git_diff`
 
@@ -176,16 +161,13 @@ max_chars: integer >= 1, default 20000
 
 Behavior:
 
-- uses a direct subprocess argument list (never `shell=True`);
+- uses a direct subprocess argument list;
 - runs inside the workspace root;
-- unstaged default: `git diff`;
-- staged: `git diff --cached`;
-- when `relative_path` is supplied it is validated to stay inside the
-  workspace and the diff is restricted to that path with `--`;
+- supports unstaged and staged diffs;
+- validates an optional path before filtering;
 - returns stdout;
-- returns a clean no-diff message when there are no changes;
 - surfaces Git errors;
-- truncates output at `max_chars` and marks the truncation explicitly.
+- truncates oversized output explicitly.
 
 ## `inspect_git_log`
 
@@ -200,12 +182,11 @@ relative_path: string, optional
 
 Behavior:
 
-- uses a direct subprocess argument list (never `shell=True`);
+- uses a direct subprocess argument list;
 - runs inside the workspace root;
-- uses `git log --oneline --decorate -n <N>`;
-- when `relative_path` is supplied it is validated to stay inside the
-  workspace and Git path filtering is applied after `--`;
-- surfaces Git / not-a-repository errors cleanly;
+- returns compact recent history;
+- validates optional path filters;
+- surfaces Git or non-repository errors;
 - never mutates the repository.
 
 ## `run_shell`
@@ -221,18 +202,9 @@ timeout: optional integer >= 1
 
 Default timeout: 30 seconds.
 
-The result includes:
+The result includes the command, stdout, stderr, and exit code.
 
-```text
-$ <command>
-STDOUT:
-...
-STDERR:
-...
-EXIT_CODE: <code>
-```
-
-Non-zero exit codes are returned to the model as tool output rather than raised automatically.
+Non-zero exit codes are returned as tool output rather than automatically converted into success.
 
 `run_shell` requires approval except in `yolo` mode.
 
@@ -254,4 +226,20 @@ TOOL_SCHEMAS
 
 `TOOL_SCHEMAS` is generated from those definitions for model tool calling.
 
-`dispatch_tool(name, args)` is the central execution entry point. It rejects unknown tools, validates arguments, and invokes the registered function.
+`dispatch_tool(name, args)` is the central local execution entry point. It rejects unknown tools, validates arguments, and invokes the registered function.
+
+## Architectural use
+
+In standalone mode, a local model can call these tools directly through the ROSIE loop.
+
+In the complete product architecture, higher-level work can arrive from HACKASS through ARCHESTRATOR and be translated into these local capabilities by ROSIE.
+
+The durable boundary is:
+
+```text
+ARCHESTRATOR-managed authorized work
+  ↓
+ROSIE local action surface
+  ↓
+local machine
+```
