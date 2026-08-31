@@ -169,7 +169,7 @@ def run_hackass(
 
 
 async def _run_async(runner: Runner, session, prompt: str) -> str:
-    """Run the agent asynchronously and return the final text response."""
+    """Run the agent asynchronously and return the complete final text response."""
     final_response = ""
 
     content = types.Content(role="user", parts=[types.Part(text=prompt)])
@@ -180,9 +180,10 @@ async def _run_async(runner: Runner, session, prompt: str) -> str:
         new_message=content,
     ):
         if event.is_final_response() and event.content:
-            parts = event.content.parts
-            if parts:
-                final_response = parts[0].text or ""
+            parts = event.content.parts or []
+            final_response = "".join(
+                part.text for part in parts if getattr(part, "text", None)
+            )
             break
 
     return final_response
