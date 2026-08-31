@@ -10,14 +10,14 @@
       {
         "source": "/execute",
         "run": {
-          "serviceId": "rosie-api",
+          "serviceId": "hackass-api",
           "region": "us-central1"
         }
       },
       {
         "source": "/health",
         "run": {
-          "serviceId": "rosie-api",
+          "serviceId": "hackass-api",
           "region": "us-central1"
         }
       }

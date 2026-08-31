@@ -23,7 +23,7 @@ MODEL_NAME: str = "gemini-3.7-flash"
 VERTEXAI_LOCATION: str = "global"
 
 #: Google Cloud project for Vertex AI.
-VERTEXAI_PROJECT: str = "rosie-fire"
+VERTEXAI_PROJECT: str = os.environ.get("VERTEXAI_PROJECT", "rosie-fire")
 
 #: Environment variable that can override the model name.
 _MODEL_ENV_VAR = "HACKASS_GEMINI_MODEL"
