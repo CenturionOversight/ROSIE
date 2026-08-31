@@ -241,8 +241,13 @@ def format_shell_result(
     if available <= 0:
         # Pathological: the structural text alone exceeds the budget.  Return
         # the smallest possible representation (empty payloads) rather than
-        # dropping the structural fields.
-        return _assemble(prefix, "", False, middle, "", False, suffix)
+        # dropping the structural fields, but clip hard to the budget so the
+        # returned block never exceeds *max_chars* even for tiny positive
+        # budgets.
+        result = _assemble(prefix, "", False, middle, "", False, suffix)
+        if len(result) > max_chars:
+            result = result[:max_chars]
+        return result
 
     out_budget, err_budget = _allocate_payload_budget(
         available,

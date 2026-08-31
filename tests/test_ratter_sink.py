@@ -491,3 +491,32 @@ class TestRatterSinkConfig:
     def test_custom_runtime_id(self):
         sink = RatterSink(runtime_id="rt_custom")
         assert sink.runtime_id == "rt_custom"
+
+# ------------------------------------------------------------------
+# BUG HUNT PASS II: derived command_id agrees across top-level + payload
+# ------------------------------------------------------------------
+
+class TestDerivedCommandIdAgreement:
+    def test_derived_command_id_in_both_fields(self):
+        event = _make_peep_event(
+            event_type="command.observed",
+            payload={"command_id": "derived-cmd-9", "command_text": "echo x"},
+        )
+        ratter_evt = map_peep_to_ratter_event(event, "rt", "inst")
+        assert ratter_evt["command_id"] == "derived-cmd-9"
+        assert ratter_evt["payload"]["rosie_command_id"] == "derived-cmd-9"
+
+    def test_explicit_command_id_agrees(self):
+        event = _make_peep_event(
+            event_type="command.completed",
+            payload={"command_id": "payload-cmd", "exit_code": 0},
+        )
+        ratter_evt = map_peep_to_ratter_event(event, "rt", "inst", command_id="explicit-cmd")
+        assert ratter_evt["command_id"] == "explicit-cmd"
+        assert ratter_evt["payload"]["rosie_command_id"] == "explicit-cmd"
+
+    def test_no_command_id_means_none_in_both(self):
+        event = _make_peep_event(event_type="session.started", payload={})
+        ratter_evt = map_peep_to_ratter_event(event, "rt", "inst")
+        assert ratter_evt["command_id"] is None
+        assert ratter_evt["payload"]["rosie_command_id"] is None

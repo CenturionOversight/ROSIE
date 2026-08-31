@@ -232,3 +232,57 @@ class TestGoogleIntegrationBoundary:
             source = inspect.getsource(func)
             assert "dispatch_tool" in source
             assert "import" not in source or "dispatch_tool" in source.split("return")[0]
+
+# ------------------------------------------------------------------
+# BUG HUNT PASS II: api_key must not leak into process-global env
+# ------------------------------------------------------------------
+
+import os as _os
+import types as _types
+
+
+class TestRunHackassApiKeyNoLeak:
+    def _run_with_mocks(self, monkeypatch):
+        from hackass import agent
+
+        fake_session = _types.SimpleNamespace(id="sess-1")
+        monkeypatch.setattr(
+            agent, "create_agent", lambda *a, **k: _types.SimpleNamespace()
+        )
+        monkeypatch.setattr(agent, "Runner", lambda **k: _types.SimpleNamespace())
+        monkeypatch.setattr(
+            agent,
+            "InMemorySessionService",
+            lambda **k: _types.SimpleNamespace(
+                create_session_sync=lambda **kk: fake_session
+            ),
+        )
+        monkeypatch.setattr(
+            agent, "InMemoryArtifactService", lambda **k: _types.SimpleNamespace()
+        )
+        def _run_and_close(coro):
+            coro.close()
+            return "RESPONSE"
+        monkeypatch.setattr(
+            agent, "asyncio", _types.SimpleNamespace(run=_run_and_close)
+        )
+        return agent
+
+    def test_api_key_not_persisted_after_run(self, monkeypatch):
+        from wrapper.tools import set_workspace_root, set_policy
+        from wrapper.policy import ApprovalPolicy, ExecutionPolicy
+        monkeypatch.delenv("GOOGLE_API_KEY", raising=False)
+
+        agent = self._run_with_mocks(monkeypatch)
+        result = agent.run_hackass(
+            workspace=".", prompt="hi", api_key="secret-key-123"
+        )
+        assert result == "RESPONSE"
+        assert _os.environ.get("GOOGLE_API_KEY") is None
+
+    def test_preexisting_key_restored_after_run(self, monkeypatch):
+        monkeypatch.setenv("GOOGLE_API_KEY", "preexisting-key")
+
+        agent = self._run_with_mocks(monkeypatch)
+        agent.run_hackass(workspace=".", prompt="hi", api_key="secret-key-123")
+        assert _os.environ.get("GOOGLE_API_KEY") == "preexisting-key"

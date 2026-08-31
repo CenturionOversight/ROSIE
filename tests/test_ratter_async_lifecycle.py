@@ -326,3 +326,26 @@ class TestOneDeadlineClose:
         sink = AsyncRatterSink(sink=_RaisingSink(), auto_start=True)
         sink.send_peep_events([_fake_event()])
         sink.close(timeout=2.0)
+# ------------------------------------------------------------------
+# BUG HUNT PASS II: sentinel must not be counted as unsent telemetry
+# ------------------------------------------------------------------
+
+class TestSentinelNotCountedUnsent:
+    def test_clean_close_reports_drained_after_flush(self, immediate_sink):
+        sink = AsyncRatterSink(sink=immediate_sink, auto_start=True)
+        sink.send_peep_events([_fake_event()])
+        assert sink.flush(timeout=2.0) is True
+        assert sink._outstanding == 0
+        drained = sink.close(timeout=2.0)
+        assert drained is True
+
+    def test_only_sentinel_in_queue_is_not_unsent(self):
+        import wrapper.ratter_async as ra
+        sink = AsyncRatterSink(sink=_ImmediateSink(), auto_start=True)
+        sink.send_peep_events([_fake_event()])
+        assert sink.flush(timeout=2.0) is True
+        # Simulate the shutdown race where a not-yet-consumed sentinel is all
+        # that remains in the queue: it must NOT be reported as unsent.
+        sink._queue.put_nowait(ra._SENTINEL)
+        drained = sink.close(timeout=2.0)
+        assert drained is True

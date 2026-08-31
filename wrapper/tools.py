@@ -1,8 +1,8 @@
 """Local execution handlers and OpenAI-format tool schemas.
 
-Defines twelve core tools Ã¢â‚¬â€ list_directory, search_workspace, inspect_file,
+Defines twelve core tools - list_directory, search_workspace, inspect_file,
 preview_write_file, write_file, apply_patch, move_path, delete_path,
-inspect_git_status, inspect_git_diff, inspect_git_log, and run_shell Ã¢â‚¬â€ backed
+inspect_git_status, inspect_git_diff, inspect_git_log, and run_shell - backed
 by :mod:`pathlib`, :mod:`subprocess`, :mod:`difflib`, :mod:`shutil`, and
 :mod:`re`.
 
@@ -15,7 +15,7 @@ returned by the model before they are forwarded to the underlying Python
 functions.
 
 Approval policies from :mod:`wrapper.policy` are honoured inside
-:func:`write_file`, :func:`apply_patch`, and :func:`run_shell` Ã¢â‚¬â€ file writes,
+:func:`write_file`, :func:`apply_patch`, and :func:`run_shell` - file writes,
 targeted patches, and shell commands are blocked until the user grants
 approval (or the policy auto-approves).
 """
@@ -178,6 +178,41 @@ def _resolve_safe_path(workspace_root: Path, user_path: str) -> Path:
             f"'{target}', which is outside the workspace root '{root}'."
         )
     return target
+
+
+def _resolve_safe_path_no_follow(workspace_root: Path, user_path: str) -> Path:
+    """Resolve *user_path* safely WITHOUT following a final symlink.
+
+    ``_resolve_safe_path`` canonicalises the whole path, which dereferences a
+    symlink at the final component.  For mutation operations such as
+    :func:`move_path` and :func:`delete_path` that would act on the symlink's
+    *target* instead of the link itself.  This helper resolves only the parent
+    directory (so traversal via ``..`` and intermediate symlinks are still
+    canonicalised and blocked), and keeps the final component untouched so a
+    symlink at the leaf is operated on as a link.
+
+    Args:
+        workspace_root: Already-resolved absolute workspace directory.
+        user_path: User-supplied relative path (or ``\".\"``).
+
+    Returns:
+        A path whose parent is canonicalised inside the workspace and whose
+        final component is preserved verbatim (never dereferenced).
+
+    Raises:
+        PathTraversalError: When the resolved parent escapes the workspace.
+    """
+    root = workspace_root.resolve()
+    candidate = Path(user_path)
+    parent = (root / candidate.parent).resolve()
+    try:
+        parent.relative_to(root)
+    except ValueError:
+        raise PathTraversalError(
+            f"Path traversal blocked: '{user_path}' resolves outside the "
+            f"workspace root '{root}'."
+        )
+    return parent / candidate.name
 
 
 # ---------------------------------------------------------------------------
@@ -348,7 +383,7 @@ class InspectGitLogArgs(BaseModel):
     model_config = {"extra": "forbid"}
 
 
-#: Mapping of tool name Ã¢â€ â€™ pydantic model (or ``None`` for no-arg tools).
+#: Mapping of tool name -> pydantic model (or ``None`` for no-arg tools).
 TOOL_MODELS: dict[str, Optional[type[BaseModel]]] = {
     "list_directory": ListDirectoryArgs,
     "search_workspace": SearchWorkspaceArgs,
@@ -428,7 +463,7 @@ def search_workspace(
     notice is appended so a partial result is never silently presented as
     exhaustive.
 
-    A file whose PATH matches the query is still content-searched Ã¢â‚¬â€ a
+    A file whose PATH matches the query is still content-searched - a
     path-name hit does not suppress content hits from the same file.
 
     Args:
@@ -464,7 +499,7 @@ def search_workspace(
 
         rel = fpath.relative_to(root).as_posix()
 
-        # Path-name hit. Do NOT skip content search Ã¢â‚¬â€ a path match still
+        # Path-name hit. Do NOT skip content search - a path match still
         # allows the same file's text to contribute content hits.
         path_hit = query_lower in rel.lower()
         if path_hit:
@@ -607,7 +642,7 @@ def inspect_file(relative_path: str, start_line: int = 1, line_count: int = 100)
 def preview_write_file(relative_path: str, content: str) -> str:
     """Generates a unified diff between the current file and proposed content.
 
-    Does **not** modify disk Ã¢â‚¬â€ it is a read-only preview used to show
+    Does **not** modify disk - it is a read-only preview used to show
     the user what will change before :func:`write_file` commits.
 
     Args:
@@ -639,7 +674,7 @@ def preview_write_file(relative_path: str, content: str) -> str:
     )
     diff_text = "".join(diff_iter)
     if not diff_text:
-        return f"No changes Ã¢â‚¬â€ the proposed content is identical to the current file."
+        return f"No changes - the proposed content is identical to the current file."
     return diff_text
 
 
@@ -982,7 +1017,7 @@ def move_path(source_path: str, destination_path: str) -> str:
 
     The source and destination are both resolved against the workspace root
     and traversal outside it is rejected.  The destination must not already
-    exist Ã¢â‚¬â€ this tool never overwrites an existing path.  The move is
+    exist - this tool never overwrites an existing path.  The move is
     performed with :func:`shutil.move` (no shell is involved).  It is a
     mutation and therefore gated by the same ``write`` approval policy as
     :func:`write_file`.
@@ -1001,13 +1036,17 @@ def move_path(source_path: str, destination_path: str) -> str:
         PathTraversalError: If either path escapes the workspace root.
     """
     root = get_workspace_root()
-    src = _resolve_safe_path(root, source_path)
-    dst = _resolve_safe_path(root, destination_path)
+    # Resolve without following a final symlink so moving a symlink moves the
+    # link itself, never its target.
+    src = _resolve_safe_path_no_follow(root, source_path)
+    dst = _resolve_safe_path_no_follow(root, destination_path)
 
     if src == root:
         return "ERROR: Refusing to move the workspace root."
 
-    if src.is_dir():
+    # A symlink source is moved as the link itself, so its resolved subtree is
+    # irrelevant to the descendant guard.
+    if src.is_dir() and not src.is_symlink():
         try:
             dst.relative_to(src)
             return (
@@ -1064,15 +1103,18 @@ def delete_path(relative_path: str, recursive: bool = False) -> str:
         PathTraversalError: If the path escapes the workspace root.
     """
     root = get_workspace_root()
-    resolved = _resolve_safe_path(root, relative_path)
+    # Resolve without following a final symlink so deleting a symlink removes
+    # the link itself, never its target.
+    resolved = _resolve_safe_path_no_follow(root, relative_path)
 
     if resolved == root:
         return "ERROR: Refusing to delete the workspace root."
 
-    if not resolved.exists():
+    if not (resolved.exists() or resolved.is_symlink()):
         return f"ERROR: Path '{relative_path}' does not exist."
 
-    is_dir = resolved.is_dir()
+    is_symlink = resolved.is_symlink()
+    is_dir = (not is_symlink) and resolved.is_dir()
     if is_dir and not recursive:
         return (
             f"ERROR: '{relative_path}' is a directory. Pass recursive=true "
@@ -1097,7 +1139,9 @@ def delete_path(relative_path: str, recursive: bool = False) -> str:
             )
 
     try:
-        if is_dir:
+        if is_symlink:
+            resolved.unlink()
+        elif is_dir:
             shutil.rmtree(str(resolved))
         else:
             resolved.unlink()
@@ -1111,7 +1155,7 @@ def delete_path(relative_path: str, recursive: bool = False) -> str:
 # Tool registry, schemas, and dispatch
 # ---------------------------------------------------------------------------
 
-#: Mapping of tool name Ã¢â€ â€™ executable Python function.
+#: Mapping of tool name -> executable Python function.
 TOOL_REGISTRY: dict[str, Any] = {
     "list_directory": list_directory,
     "search_workspace": search_workspace,
@@ -1168,7 +1212,7 @@ def dispatch_tool(name: str, args: dict[str, Any]) -> str:
         args: Raw argument dictionary from the model.
 
     Returns:
-        The tool's textual result, or an ``ERROR: Ã¢â‚¬Â¦`` string.
+        The tool's textual result, or an ``ERROR: ...`` string.
     """
     if name not in TOOL_REGISTRY:
         return f"ERROR: Unknown tool '{name}'."

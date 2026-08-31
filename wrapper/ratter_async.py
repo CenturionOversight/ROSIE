@@ -255,7 +255,12 @@ class AsyncRatterSink:
             remaining = max(0, deadline - time.monotonic())
             self._worker.join(timeout=remaining)
 
-        pending = self._queue.qsize()
+        # Count only *real* telemetry items still in the queue.  The shutdown
+        # sentinel (None) is deliberately not telemetry - the queue's raw
+        # qsize() would otherwise count a not-yet-consumed sentinel and make
+        # close() misreport unsent traffic on an otherwise clean shutdown.
+        with self._queue.mutex:
+            pending = sum(1 for item in self._queue.queue if item is not None)
         if self._outstanding > 0 or pending > 0:
             logger.warning(
                 "RATTER async close: %d queued item(s) and %d outstanding "

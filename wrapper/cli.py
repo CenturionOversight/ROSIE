@@ -528,6 +528,13 @@ def _close_peep_executor() -> None:
             close()
     except Exception:
         pass
+    # Reset the global shell executor so :func:`wrapper.tools.run_shell` no
+    # longer points at the now-closed PEEP executor and falls back to the
+    # default subprocess executor for any subsequent calls.
+    try:
+        set_shell_executor(None)
+    except Exception:
+        pass
 
 
 if __name__ == "__main__":

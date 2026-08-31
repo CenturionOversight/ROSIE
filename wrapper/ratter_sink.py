@@ -87,6 +87,13 @@ def map_peep_to_ratter_event(
     """
     occurred_at = event.occurred_at.isoformat() if isinstance(event.occurred_at, datetime) else event.occurred_at
 
+    # Resolve the effective command id once, before building the structure, so
+    # the payload (``rosie_command_id``) and the top-level ``command_id`` never
+    # disagree when the id is derived from the PEEP payload rather than passed
+    # in as an explicit argument.
+    if command_id is None:
+        command_id = (event.payload or {}).get("command_id")
+
     ratter_event: dict[str, Any] = {
         "event_type": event.event_type,
         "event_category": _peep_event_category(event.event_type),
@@ -118,10 +125,6 @@ def map_peep_to_ratter_event(
         "retention_class": "standard",
         "tags": ["peep", "rosie-local", event.event_type],
     }
-    if command_id is None:
-        command_id = (event.payload or {}).get("command_id")
-        if command_id is not None:
-            ratter_event["command_id"] = command_id
     return ratter_event
 
 

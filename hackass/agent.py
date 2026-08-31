@@ -129,36 +129,44 @@ def run_hackass(
     Returns:
         The agent's final text response.
     """
+    previous_key = os.environ.get("GOOGLE_API_KEY")
     if api_key:
         os.environ["GOOGLE_API_KEY"] = api_key
 
-    agent = create_agent(
-        workspace=workspace,
-        model_name=model_name,
-        yolo=yolo,
-    )
+    try:
+        agent = create_agent(
+            workspace=workspace,
+            model_name=model_name,
+            yolo=yolo,
+        )
 
-    session_service = InMemorySessionService()
-    artifact_service = InMemoryArtifactService()
+        session_service = InMemorySessionService()
+        artifact_service = InMemoryArtifactService()
 
-    runner = Runner(
-        agent=agent,
-        app_name="rosie-hackass",
-        session_service=session_service,
-        artifact_service=artifact_service,
-        auto_create_session=True,
-    )
+        runner = Runner(
+            agent=agent,
+            app_name="rosie-hackass",
+            session_service=session_service,
+            artifact_service=artifact_service,
+            auto_create_session=True,
+        )
 
-    session = session_service.create_session_sync(
-        app_name="rosie-hackass",
-        user_id="user",
-    )
+        session = session_service.create_session_sync(
+            app_name="rosie-hackass",
+            user_id="user",
+        )
 
-    response = asyncio.run(
-        _run_async(runner, session, prompt)
-    )
-
-    return response
+        return asyncio.run(
+            _run_async(runner, session, prompt)
+        )
+    finally:
+        # Never leak an ephemeral api_key into the process-global environment:
+        # restore whatever was present before the call.
+        if api_key:
+            if previous_key is None:
+                os.environ.pop("GOOGLE_API_KEY", None)
+            else:
+                os.environ["GOOGLE_API_KEY"] = previous_key
 
 
 async def _run_async(runner: Runner, session, prompt: str) -> str:

@@ -897,3 +897,95 @@ class TestMovePathGuards:
         set_workspace_root(tmp_path)
         with pytest.raises(Exception):
             move_path("../../etc/passwd", "stolen.txt")
+# ------------------------------------------------------------------
+# BUG HUNT PASS II: tiny-budget constraint, symlink safety, CLI reset
+# ------------------------------------------------------------------
+
+class TestTinyBudgetShellResult:
+    """format_shell_result must never exceed max_chars for tiny positive budgets."""
+
+    def test_format_shell_single_char_budget(self):
+        from wrapper.output_bounds import format_shell_result
+        for n in range(1, 6):
+            r = format_shell_result(
+                "c", stdout="A" * 500, stderr="B" * 500,
+                exit_code=0, max_chars=n,
+            )
+            assert len(r) <= n, f"max_chars={n} got len={len(r)}"
+
+    def test_format_shell_payload_only_tiny(self):
+        from wrapper.output_bounds import format_shell_result
+        for n in [1, 2, 3, 5, 10, 20, 40, 64]:
+            r = format_shell_result("c", stdout="A" * 500, stderr="", exit_code=0, max_chars=n)
+            assert len(r) <= n, f"max_chars={n} got len={len(r)}"
+
+    def test_format_shell_tiny_timeout_budget(self):
+        from wrapper.output_bounds import format_shell_result
+        for n in [1, 2, 5, 10, 30, 60, 100]:
+            r = format_shell_result(
+                "c", stdout="A" * 500, stderr="", exit_code=-1,
+                timed_out=True, timeout_seconds=30, max_chars=n,
+            )
+            assert len(r) <= n, f"max_chars={n} got len={len(r)}"
+
+
+class TestShellExecutorResetOnClose:
+    def test_close_peep_executor_resets_global_shell_executor(self, monkeypatch):
+        import wrapper.cli as cli
+        import wrapper.tools as tools_mod
+        fake = MagicMock()
+        monkeypatch.setattr(cli, "_peep_executor", fake)
+        tools_mod._shell_executor = fake
+        cli._close_peep_executor()
+        assert fake.close.call_count == 1
+        assert cli._peep_executor is None
+        assert tools_mod._shell_executor is None
+
+    def test_fallback_close_does_not_touch_executor(self, monkeypatch):
+        import wrapper.cli as cli
+        import wrapper.tools as tools_mod
+        sentinel = object()
+        tools_mod._shell_executor = sentinel
+        monkeypatch.setattr(cli, "_peep_executor", None)
+        cli._close_peep_executor()
+        assert tools_mod._shell_executor is sentinel
+
+
+class TestResolveSafePathNoFollow:
+    def test_helper_keeps_leaf_verbatim(self, tmp_path):
+        from wrapper.tools import _resolve_safe_path_no_follow
+        p = _resolve_safe_path_no_follow(tmp_path.resolve(), "a/b.txt")
+        assert p.name == "b.txt"
+        assert p.parent.name == "a"
+        assert str(p.parent.parent) == str(tmp_path.resolve())
+
+    def test_helper_blocks_traversal(self, tmp_path):
+        from wrapper.tools import _resolve_safe_path_no_follow, PathTraversalError
+        import pytest
+        with pytest.raises(PathTraversalError):
+            _resolve_safe_path_no_follow(tmp_path.resolve(), "../../etc/passwd")
+
+    def test_move_and_delete_do_not_dereference_symlink(self, tmp_path, yolo):
+        from wrapper.tools import move_path, delete_path, set_workspace_root
+        import os
+        set_workspace_root(tmp_path)
+        target = tmp_path / "real.txt"
+        target.write_text("TARGET")
+        link = tmp_path / "the_link.txt"
+        try:
+            os.symlink(str(target), str(link))
+        except (OSError, NotImplementedError):
+            pytest.skip("symlinks not supported on this platform")
+
+        res = delete_path("the_link.txt")
+        assert "Successfully deleted" in res
+        assert not os.path.lexists(str(link))
+        assert target.exists()
+
+        link2 = tmp_path / "the_link2.txt"
+        os.symlink(str(target), str(link2))
+        res = move_path("the_link2.txt", "moved_link.txt")
+        assert "Successfully moved" in res
+        assert os.path.lexists(str(tmp_path / "moved_link.txt"))
+        assert not os.path.lexists(str(link2))
+        assert target.exists()
