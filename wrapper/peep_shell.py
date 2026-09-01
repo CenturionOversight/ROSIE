@@ -15,6 +15,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from uuid import uuid4
 
+from peep.boundary import COMMAND_END_PREFIX, COMMAND_START_PREFIX
 from peep.command import COMMAND_STATE_CREATED, PeepCommand
 from peep.events import (
     COMMAND_COMPLETED,
@@ -45,6 +46,18 @@ def _get_ratter_sink():
         return AsyncRatterSink()
     except Exception:
         return None
+
+
+def _is_peep_harness_line(text: str) -> bool:
+    """Return True for lines carrying PEEP command-boundary scaffolding.
+
+    When PowerShell echoes the submitted wrapper line back on stdout (the
+    host prompt prefixes the echo, so the boundary decoder never consumes
+    it), the echoed text contains the reserved ``__PEEP_COMMAND_*__``
+    sentinels.  Such lines are PEEP harness material, not command output,
+    and must never surface in the ROSIE shell result.
+    """
+    return COMMAND_START_PREFIX in text or COMMAND_END_PREFIX in text
 
 
 class PeepShellExecutor:
@@ -190,7 +203,10 @@ class PeepShellExecutor:
 
     def _collect_stdout(self, event: PeepEvent) -> list[str]:
         if event.event_type == OUTPUT_STDOUT:
-            return [event.payload.get("text", "")]
+            text = event.payload.get("text", "")
+            if _is_peep_harness_line(text):
+                return []
+            return [text]
         return []
 
     def _collect_stderr(self, event: PeepEvent) -> list[str]:
