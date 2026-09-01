@@ -246,7 +246,13 @@ def format_shell_result(
     available = max_chars - fixed
 
     if available <= 0:
-        result = _assemble(prefix, "", False, middle, "", False, suffix)
+        # No payload budget remains.  Non-empty streams contribute nothing
+        # (their budget is exhausted) while genuinely empty streams keep the
+        # ``(empty)`` placeholder, so the structural block itself is emitted
+        # intact whenever it fits within *max_chars*.
+        result = _assemble(
+            prefix, "", stdout_nonempty, middle, "", stderr_nonempty, suffix
+        )
         if len(result) > max_chars:
             result = result[:max_chars]
         return result
@@ -257,8 +263,17 @@ def format_shell_result(
         len(stderr) if stderr_nonempty else 0,
     )
 
-    bounded_stdout = stdout if not stdout_nonempty else box_output(stdout, out_budget)
-    bounded_stderr = stderr if not stderr_nonempty else box_output(stderr, err_budget)
+    # A non-empty stream whose computed budget is 0 contributes nothing;
+    # ``box_output`` treats budgets below 1 as 1, which would inflate the
+    # block past the total and clip structural fields.
+    bounded_stdout = (
+        stdout if not stdout_nonempty
+        else (box_output(stdout, out_budget) if out_budget > 0 else "")
+    )
+    bounded_stderr = (
+        stderr if not stderr_nonempty
+        else (box_output(stderr, err_budget) if err_budget > 0 else "")
+    )
 
     result = _assemble(
         prefix, bounded_stdout, stdout_nonempty, middle, bounded_stderr,
