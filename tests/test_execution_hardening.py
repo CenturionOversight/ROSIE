@@ -825,7 +825,11 @@ class TestSmallOutputBudget:
         from wrapper.output_bounds import format_shell_result
         for cmd_len in (0, 1, 10):
             cmd = "c" * cmd_len
-            for mc in range(40, 130):
+            prefix = f"$ {cmd}\nSTDOUT:\n"
+            middle = "\nSTDERR:\n"
+            suffix = "\nEXIT_CODE: 0\nTIMED_OUT: false"
+            fixed = len(prefix) + len(middle) + len(suffix)
+            for mc in range(fixed, fixed + 40):
                 r = format_shell_result(
                     cmd, stdout="A" * 500, stderr="B" * 500,
                     exit_code=0, max_chars=mc,
