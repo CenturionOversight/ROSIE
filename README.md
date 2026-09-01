@@ -149,13 +149,14 @@ python -m pytest tests/ -v
 Current verified baseline documented in this repository:
 
 ```text
-324 discovered
-323 passed
+478 collected
+474 passed
 0 failed
-1 skipped
+4 skipped
 ```
 
-The skipped test is the symlink escape test on Windows.
+The skipped tests require symlink privileges that are unavailable in the
+local Windows environment.
 
 ## Documentation
 

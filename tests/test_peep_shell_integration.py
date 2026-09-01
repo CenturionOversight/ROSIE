@@ -286,3 +286,31 @@ class TestPeeperCwdSupport:
             event_factory=factory,
         )
         assert adapter._cwd is None
+
+
+class TestPeepHarnessEchoSuppressed:
+    """PowerShell echoes the submitted PEEP wrapper line on stdout (prompt
+    prefixed, so the boundary decoder never consumes it).  The echoed
+    harness scaffolding must never surface in the ROSIE shell result."""
+
+    def test_result_contains_no_peep_harness_scaffolding(self, tmp_path):
+        from wrapper.policy import ApprovalPolicy, ExecutionPolicy
+        from wrapper.tools import run_shell, set_policy, set_workspace_root
+
+        set_workspace_root(tmp_path)
+        set_policy(ApprovalPolicy(ExecutionPolicy.YOLO))
+
+        import wrapper.tools as tools_mod
+        from wrapper.peep_shell import PeepShellExecutor
+        original = tools_mod._shell_executor
+        tools_mod._shell_executor = PeepShellExecutor(cwd=str(tmp_path))
+        try:
+            result = run_shell("Write-Output 'clean-marker'", timeout=30)
+        finally:
+            tools_mod._shell_executor = original
+
+        assert "clean-marker" in result
+        assert "__PEEP_COMMAND_START__" not in result
+        assert "__PEEP_COMMAND_END__" not in result
+        assert "FromBase64String" not in result
+
