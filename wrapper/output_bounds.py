@@ -93,8 +93,10 @@ def box_output(
     if marker:
         avail -= 2  # newlines around the marker
 
-    if avail <= 0:
-        # Marker alone fills the budget - return whatever fits.
+    if avail <= 0 or (marker and avail < 2):
+        # The marker leaves no room for the mandatory head+tail structure -
+        # return whatever fits as a deterministic prefix so strict length
+        # correctness is preserved.
         return text[:max_chars]
 
     head_len = int(avail * 0.6)
