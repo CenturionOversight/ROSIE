@@ -205,6 +205,16 @@ def _resolve_safe_path_no_follow(workspace_root: Path, user_path: str) -> Path:
     """
     root = workspace_root.resolve()
     candidate = Path(user_path)
+    if candidate.name == "..":
+        # A final ``..`` is not a symlink leaf; preserved verbatim it would be
+        # resolved by the OS against the real parent directory, bypassing the
+        # lexical containment and root guards (e.g. ``delete_path('sub/..')``
+        # would delete the workspace contents).
+        raise PathTraversalError(
+            f"Path traversal blocked: '{user_path}' ends with a parent "
+            f"reference ('..'), which would resolve outside the intended "
+            f"target."
+        )
     parent = (root / candidate.parent).resolve()
     try:
         parent.relative_to(root)

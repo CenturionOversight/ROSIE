@@ -57,3 +57,51 @@ class TestPathTraversal:
         link_dir.symlink_to(outside, target_is_directory=True)
         with pytest.raises(PathTraversalError):
             _resolve_safe_path(workspace, "link/escape.txt")
+
+    def test_no_follow_final_parent_ref_blocked(self, workspace):
+        from wrapper.tools import _resolve_safe_path_no_follow
+        with pytest.raises(PathTraversalError):
+            _resolve_safe_path_no_follow(workspace, "sub/..")
+        with pytest.raises(PathTraversalError):
+            _resolve_safe_path_no_follow(workspace, "..")
+
+
+class TestParentRefMutationGuards:
+    """delete_path/move_path must never act on a final '..' component: the
+    OS would resolve it against the real parent directory, bypassing the
+    lexical root guard (regression: delete_path('sub/..') deleted the whole
+    workspace; delete_path('..') deleted the workspace's parent)."""
+
+    @pytest.fixture(autouse=True)
+    def _yolo(self, workspace, monkeypatch):
+        from wrapper.policy import ApprovalPolicy, ExecutionPolicy
+        from wrapper.tools import set_policy
+        set_policy(ApprovalPolicy(ExecutionPolicy.YOLO))
+
+    def test_delete_path_parent_ref_keeps_workspace(self, workspace):
+        from wrapper.tools import delete_path
+        (workspace / "sub").mkdir()
+        (workspace / "precious.txt").write_text("KEEP", encoding="utf-8")
+        with pytest.raises(PathTraversalError):
+            delete_path("sub/..", recursive=True)
+        assert (workspace / "precious.txt").exists()
+        assert (workspace / "sub").exists()
+
+    def test_delete_path_dotdot_cannot_escape_workspace(self, workspace, tmp_path):
+        from wrapper.tools import delete_path
+        sentinel = tmp_path / "outside.txt"
+        sentinel.write_text("O", encoding="utf-8")
+        with pytest.raises(PathTraversalError):
+            delete_path("..", recursive=True)
+        assert sentinel.exists()
+        assert workspace.exists()
+
+    def test_interior_parent_ref_still_resolves(self, workspace):
+        from wrapper.tools import delete_path
+        (workspace / "a" / "b").mkdir(parents=True)
+        target = workspace / "a" / "f.txt"
+        target.write_text("x", encoding="utf-8")
+        result = delete_path("a/b/../f.txt")
+        assert "Successfully deleted" in result
+        assert not target.exists()
+

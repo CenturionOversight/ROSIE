@@ -818,6 +818,29 @@ class TestSmallOutputBudget:
         out, err = _allocate_payload_budget(1, 500, 500)
         assert out + err <= 1
 
+    def test_structural_fields_survive_when_block_fits(self):
+        """When the structural block fits max_chars, no field is clipped away
+        even when both payload streams are oversized (regression: a 0-budget
+        stream used to inflate the block and amputate TIMED_OUT/EXIT_CODE)."""
+        from wrapper.output_bounds import format_shell_result
+        for cmd_len in (0, 1, 10):
+            cmd = "c" * cmd_len
+            prefix = f"$ {cmd}\nSTDOUT:\n"
+            middle = "\nSTDERR:\n"
+            suffix = "\nEXIT_CODE: 0\nTIMED_OUT: false"
+            fixed = len(prefix) + len(middle) + len(suffix)
+            for mc in range(fixed, fixed + 40):
+                r = format_shell_result(
+                    cmd, stdout="A" * 500, stderr="B" * 500,
+                    exit_code=0, max_chars=mc,
+                )
+                assert len(r) <= mc
+                assert f"$ {cmd}" in r
+                assert "STDOUT:" in r
+                assert "STDERR:" in r
+                assert "EXIT_CODE: 0" in r
+                assert "TIMED_OUT: false" in r
+
 
 # ------------------------------------------------------------------
 # TARGET 4 â€” move_path guard tests
