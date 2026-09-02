@@ -1,8 +1,9 @@
 """Asynchronous RATTER event forwarding for PEEP telemetry.
 
 The synchronous :class:`~wrapper.ratter_sink.RatterSink` performs a blocking
-HTTP POST to RATTER on the calling thread.  Because PEEP events are produced
-on the execution-critical path while a shell command runs, that HTTP round
+send on the calling thread - into the in-process RATTER core by default, or
+to a standalone RATTER server when a URL is configured.  Because PEEP events
+are produced on the execution-critical path while a shell command runs, that
 trip adds latency to command execution.
 
 :class:`AsyncRatterSink` removes that latency from the execution path:
@@ -22,7 +23,7 @@ trip adds latency to command execution.
   idempotent and terminal: a closed sink cannot be restarted.
 
 The sink is still best-effort telemetry.  Dropping events, a full queue, or
-an unreachable RATTER must never break command execution.
+an unavailable record must never break command execution.
 """
 
 from __future__ import annotations
