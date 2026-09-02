@@ -314,3 +314,56 @@ class TestPeepHarnessEchoSuppressed:
         assert "__PEEP_COMMAND_END__" not in result
         assert "FromBase64String" not in result
 
+
+class TestPeepCommandCorrelation:
+    """Every PEEP event for an execution must carry the command ID when
+    forwarded to RATTER, not just events after COMMAND_OBSERVED."""
+
+    def test_all_peep_events_carry_same_command_id(self):
+        from types import SimpleNamespace
+        from unittest.mock import patch
+
+        from wrapper.peep_shell import PeepShellExecutor
+
+        sink_calls = []
+
+        class _Sink:
+            def send_peep_events(self, events, command_id=None, task_id=None):
+                sink_calls.append({"events": list(events), "command_id": command_id, "task_id": task_id})
+                return True
+
+        def _ev(event_type, payload):
+            return SimpleNamespace(event_type=event_type, payload=payload)
+
+        class FakeAdapter:
+            def __init__(self):
+                self._polls = [
+                    [_ev("session.started", {"session_id": "s1"}), _ev("process.started", {"process_id": 1234})],
+                    [_ev("command.observed", {"command_id": "c1"})],
+                    [_ev("command.completed", {"command_id": "c1", "exit_code": 0})],
+                ]
+                self._poll_idx = 0
+            def start(self): pass
+            def submit(self, cmd): pass
+            def poll(self):
+                if self._poll_idx < len(self._polls):
+                    batch = self._polls[self._poll_idx]
+                    self._poll_idx += 1
+                    return list(batch)
+                return []
+            def stop(self): pass
+
+        executor = PeepShellExecutor(cwd=".")
+        executor._ratter_sink = _Sink()
+        with patch("wrapper.peep_shell.PowerShellAdapter", return_value=FakeAdapter()):
+            result = executor.execute("echo hi", timeout=30)
+
+        assert result, "executor returned empty result"
+        assert sink_calls, "no events forwarded to RATTER"
+        ids = {c["command_id"] for c in sink_calls}
+        assert ids == {sink_calls[0]["command_id"]}, f"mixed command_ids: {ids}"
+        assert ids != {None}, "command_id None on some forwarded events"
+        assert "" not in ids, "command_id empty"
+
+
+
