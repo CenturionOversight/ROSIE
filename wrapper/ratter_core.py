@@ -27,6 +27,7 @@ import base64
 import hashlib
 import hmac
 import json
+import math
 import threading
 from datetime import UTC, datetime
 from typing import Any
@@ -49,6 +50,13 @@ _DEFAULT_RUNTIME_ID = "rt_rosie_local"
 _DEFAULT_INSTANCE_ID = "inst_rosie_local_01"
 _DEFAULT_SIGNATURE_KEY = "ratter-secret-key-2026"
 _DEFAULT_SIGNATURE_KEY_ID = "key_sentinel_2026_pub"
+# Bounded in-process retention: sessions (and all their events), alerts, and
+# events are each capped independently.  When exceeded, the oldest complete
+# sessions/alerts are dropped wholesale, so surviving sessions always keep
+# intact chain links and sequence ordering.
+_DEFAULT_MAX_SESSIONS = 1_000
+_DEFAULT_MAX_EVENTS = 100_000
+_DEFAULT_MAX_ALERTS = 500
 
 
 # ---------------------------------------------------------------------------
@@ -60,20 +68,33 @@ def canonicalize_json(value: Any) -> str:
     """Produce RATTER's canonical JSON string for a value.
 
     Matches ``canonicalizeJson`` in RATTER: no whitespace, object keys are
-    sorted, and keys whose value is ``None``/``undefined`` are omitted.
+    sorted, keys whose value is ``None``/``undefined`` are omitted, unicode
+    is preserved verbatim (no ``\\uXXXX`` escapes), and non-finite numbers
+    serialize as ``null``.
     """
     if value is None:
         return "null"
     if isinstance(value, bool):
-        return json.dumps(value)
-    if isinstance(value, (int, float, str)):
-        return json.dumps(value)
+        return "true" if value else "false"
+    if isinstance(value, float):
+        # ECMAScript JSON.stringify(NaN / ±Infinity) → "null".
+        if math.isnan(value) or math.isinf(value):
+            return "null"
+        # JSON.stringify renders integral floats with no fractional part
+        if value == int(value):
+            return str(int(value))
+        return repr(value)
+    if isinstance(value, int):
+        return str(value)
+    if isinstance(value, str):
+        return json.dumps(value, ensure_ascii=False)
     if isinstance(value, (list, tuple)):
         return "[" + ",".join(canonicalize_json(v) for v in value) + "]"
     if isinstance(value, dict):
         keys = sorted(k for k in value if value[k] is not None)
         return "{" + ",".join(
-            json.dumps(k) + ":" + canonicalize_json(value[k]) for k in keys
+            json.dumps(k, ensure_ascii=False) + ":" + canonicalize_json(value[k])
+            for k in keys
         ) + "}"
     raise TypeError(f"cannot canonicalize value of type {type(value).__name__}")
 
@@ -111,18 +132,36 @@ class RatterCore:
     chain hashing, signature generation, sequence-gap detection, and
     broken-chain detection.  Query helpers mirror RATTER's session /
     timeline / integrity endpoint semantics.
+
+    Bounded in-process retention: when either ``max_sessions`` or
+    ``max_events`` is exceeded, the oldest sessions and the events belonging
+    to them are dropped wholesale, so surviving sessions keep intact chain
+    links and sequence ordering.  ``max_alerts`` similarly bounds the alert
+    record.  No background worker or database is required.
     """
 
     def __init__(
         self,
         runtime_id: str = _DEFAULT_RUNTIME_ID,
         instance_id: str = _DEFAULT_INSTANCE_ID,
+        max_sessions: int = _DEFAULT_MAX_SESSIONS,
+        max_events: int = _DEFAULT_MAX_EVENTS,
+        max_alerts: int = _DEFAULT_MAX_ALERTS,
     ) -> None:
         self.runtime_id = runtime_id
         self.instance_id = instance_id
         self.events: list[dict[str, Any]] = []
         self.sessions: list[dict[str, Any]] = []
         self.alerts: list[dict[str, Any]] = []
+        self._max_sessions = max_sessions
+        self._max_events = max_events
+        self._max_alerts = max_alerts
+        # Incremental ingest state: last chain_hash + sequence per session,
+        # populated as events arrive. ``None`` markers are never stored here;
+        # missing keys mean the session has not been seen before.
+        self._last_chain: dict[str, str] = {}
+        self._last_seq: dict[str, int] = {}
+        self._session_index: dict[str, dict[str, Any]] = {}
         self._lock = threading.RLock()
 
     # ------------------------------------------------------------------
@@ -147,27 +186,25 @@ class RatterCore:
         runtime_id = raw_event.get("runtime_id") or self.runtime_id
         instance_id = raw_event.get("instance_id") or self.instance_id
         session_id = raw_event.get("session_id") or f"session_live_{uuid4().hex[:12]}"
+        tenant_id = raw_event.get("tenant_id") or _DEFAULT_TENANT_ID
 
         payload = raw_event.get("payload") or {}
         payload_hash = compute_payload_hash(payload)
 
-        session_events = sorted(
-            (e for e in self.events if e["session_id"] == session_id),
-            key=lambda e: e["sequence_number"],
-        )
-        prev_chain_hash = (
-            session_events[-1]["integrity"]["chain_hash"] if session_events else GENESIS_CHAIN_HASH
-        )
+        # Incremental ingest: read prior-session state from the cached
+        # last-chain / last-seq indexes instead of rescanning the full
+        # retained event list.
+        prev_chain_hash = self._last_chain.get(session_id, GENESIS_CHAIN_HASH)
+        last_seq = self._last_seq.get(session_id, 0)
 
         seq_num = raw_event.get("sequence_number")
         if seq_num is None:
-            seq_num = session_events[-1]["sequence_number"] + 1 if session_events else 1
+            seq_num = last_seq + 1
 
         chain_hash = compute_chain_hash(prev_chain_hash, payload_hash, seq_num)
 
         integrity_status = "verified"
-        if session_events:
-            last_seq = session_events[-1]["sequence_number"]
+        if session_id in self._session_index:
             if seq_num != last_seq + 1:
                 integrity_status = "sequence_gap"
         given_prev = (raw_event.get("integrity") or {}).get("previous_chain_hash")
@@ -184,7 +221,7 @@ class RatterCore:
             "schema_version": raw_event.get("schema_version") or "1.0.0",
             "event_id": event_id,
             "external_event_id": raw_event.get("external_event_id") or f"ext_{event_id}",
-            "tenant_id": raw_event.get("tenant_id") or _DEFAULT_TENANT_ID,
+            "tenant_id": tenant_id,
             "runtime_id": runtime_id,
             "instance_id": instance_id,
             "session_id": session_id,
@@ -223,11 +260,15 @@ class RatterCore:
 
         self.events.append(event)
 
-        session = next((s for s in self.sessions if s["session_id"] == session_id), None)
+        # Incremental ingest state
+        self._last_chain[session_id] = chain_hash
+        self._last_seq[session_id] = seq_num
+
+        session = self._session_index.get(session_id)
         if session is None:
             session = {
                 "session_id": session_id,
-                "tenant_id": _DEFAULT_TENANT_ID,
+                "tenant_id": tenant_id,
                 "runtime_id": runtime_id,
                 "instance_id": instance_id,
                 "external_session_id": f"ext_{session_id}",
@@ -239,6 +280,7 @@ class RatterCore:
                 "integrity_status": "verified",
             }
             self.sessions.append(session)
+            self._session_index[session_id] = session
         session["event_count"] += 1
         if integrity_status != "verified":
             session["integrity_status"] = integrity_status
@@ -247,7 +289,7 @@ class RatterCore:
             self.alerts.append(
                 {
                     "alert_id": f"alert_anom_{uuid4().hex[:8]}",
-                    "tenant_id": _DEFAULT_TENANT_ID,
+                    "tenant_id": tenant_id,
                     "runtime_id": runtime_id,
                     "instance_id": instance_id,
                     "session_id": session_id,
@@ -262,7 +304,34 @@ class RatterCore:
                 }
             )
 
+        # Bounded retention: keep memory bounded by evicting oldest sessions/events/alerts
+        self._enforce_retention_limits_locked()
+
         return {"event": event, "status": integrity_status}
+
+    def _enforce_retention_limits_locked(self) -> None:
+        """Evict oldest sessions (and associated events) / oldest alerts beyond
+        bounds.  Only whole sessions are dropped: a surviving session's
+        timeline and chain links therefore remain perfectly intact.
+        """
+        # alert bound: drop oldest entries
+        if len(self.alerts) > self._max_alerts:
+            self.alerts = self.alerts[len(self.alerts) - self._max_alerts :]
+        # session bound: evict oldest sessions until within limit
+        while len(self.sessions) > self._max_sessions:
+            self._evict_session_locked(self.sessions[0])
+        # event count bound via whole-session eviction (no mid-chain amputation)
+        while len(self.events) > self._max_events and self.sessions:
+            self._evict_session_locked(self.sessions[0])
+
+    def _evict_session_locked(self, session: dict[str, Any]) -> None:
+        sid = session["session_id"]
+        self._session_index.pop(sid, None)
+        self._last_chain.pop(sid, None)
+        self._last_seq.pop(sid, None)
+        self.sessions = [s for s in self.sessions if s["session_id"] != sid]
+        self.events = [e for e in self.events if e["session_id"] != sid]
+        self.alerts = [a for a in self.alerts if a["session_id"] != sid]
 
     # ------------------------------------------------------------------
     # Queries (mirror RATTER's session/timeline/integrity endpoints)
@@ -271,7 +340,7 @@ class RatterCore:
     def get_session(self, session_id: str) -> dict[str, Any] | None:
         """Return the session record for *session_id*, or None."""
         with self._lock:
-            return next((s for s in self.sessions if s["session_id"] == session_id), None)
+            return self._session_index.get(session_id)
 
     def get_timeline(self, session_id: str) -> list[dict[str, Any]]:
         """Return the session's events sorted by sequence number."""
@@ -282,27 +351,49 @@ class RatterCore:
     def get_integrity(self, session_id: str) -> dict[str, Any]:
         """Evaluate a session's chain integrity and sequence completeness.
 
-        Mirrors RATTER's ``GET /api/v1/sessions/:id/integrity`` semantics.
+        Mirrors RATTER's ``GET /api/v1/sessions/:id/integrity`` semantics
+        and additionally recomputes payload/chain hashes from stored event
+        payloads, so post-ingest payload tampering fails verification.
+        An event whose ingest was flagged ``broken_chain`` is never ignored,
+        even at index 0.
         """
         events = self.get_timeline(session_id)
         gaps: list[int] = []
         broken: list[str] = []
         for idx, evt in enumerate(events):
+            rebuilt_payload_hash = compute_payload_hash(evt["payload"])
+            stored_integrity = evt["integrity"]
+            stored_prev = stored_integrity["previous_chain_hash"]
+            stored_chain = stored_integrity["chain_hash"]
+            if rebuilt_payload_hash != stored_integrity["payload_hash"]:
+                broken.append(evt["event_id"])
+            rebuilt_chain = compute_chain_hash(
+                stored_prev, rebuilt_payload_hash, evt["sequence_number"]
+            )
+            if rebuilt_chain != stored_chain:
+                broken.append(evt["event_id"])
             if idx == 0:
+                # First event in a session: chain starts from the genesis hash.
+                # Anything else (or an ingest-flagged broken_chain) breaks it.
+                if stored_prev != GENESIS_CHAIN_HASH:
+                    broken.append(evt["event_id"])
+                elif evt.get("integrity_status") == "broken_chain":
+                    broken.append(evt["event_id"])
                 continue
             prev = events[idx - 1]
             if evt["sequence_number"] != prev["sequence_number"] + 1:
                 gaps.append(evt["sequence_number"])
-            if evt["integrity"]["previous_chain_hash"] != prev["integrity"]["chain_hash"]:
+            if stored_prev != prev["integrity"]["chain_hash"]:
                 broken.append(evt["event_id"])
         verified = bool(events) and not gaps and not broken
+        uniq_broken = sorted(set(broken))
         return {
             "session_id": session_id,
             "total_events": len(events),
             "is_verified": verified,
             "sequence_gaps": gaps,
-            "broken_links": broken,
-            "integrity_status": "verified" if verified else ("broken_chain" if broken else "sequence_gap"),
+            "broken_links": uniq_broken,
+            "integrity_status": "verified" if verified else ("broken_chain" if uniq_broken else "sequence_gap"),
         }
 
 
