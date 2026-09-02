@@ -128,7 +128,7 @@ PEEP is observation around execution; it does not replace ROSIE's locality role 
 
 Every standalone turn (`wrapper/cli.py:_run_turn`) is assigned a unique `task_id` (`task_<uuid>`) recorded in a lightweight runtime context (`wrapper/rt_context.py`). That id is telemetry plumbing only — it is never exposed to the model as a tool argument. All of a turn's shell commands, PEEP sessions, and RATTER telemetry events share the id, so a downstream observer can correlate a single user request with every machine action it caused.
 
-PEEP events are forwarded to RATTER through an asynchronous sink (`wrapper/ratter_async.py`). A bounded queue accepts events from the execution thread and a background worker posts batches to RATTER, so the HTTP telemetry round trip never sits on the command-execution path. Enqueue is non-blocking, the queue is bounded, and any RATTER failure is non-fatal: telemetry dropping never breaks command execution.
+PEEP events are forwarded to ROSIE's RATTER operational record through an asynchronous sink (`wrapper/ratter_async.py`). A bounded queue accepts events from the execution thread and a background worker writes batches into the in-process RATTER core (`wrapper/ratter_core.py`) - no separately-running RATTER server or HTTP round trip is required for the standard local path; setting `RATTER_URL` opts into the optional HTTP integration with a standalone RATTER server. Enqueue is non-blocking, the queue is bounded, and any RATTER failure is non-fatal: telemetry dropping never breaks command execution.
 
 Shell results carry two hardening properties shared by both the PEEP and the subprocess executors:
 

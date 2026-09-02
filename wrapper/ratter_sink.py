@@ -1,15 +1,16 @@
-"""RATTER event sink for PEEP operational telemetry.
+"""RATTER operational-record sink for PEEP telemetry.
 
-Sends PEEP PeepEvent objects to RATTER's generic telemetry ingestion
-endpoint. Failures are logged locally but never propagate through the
-ROSIE execution path.
+Sends PEEP PeepEvent objects into ROSIE's internal RATTER operational record
+(:mod:`wrapper.ratter_core`) by default - no local RATTER service, HTTP round
+trip, or ``RATTER_URL`` is required for the standard local path.
 
-This module is OUTSIDE the execution-critical path: if RATTER is
-unavailable, commands still succeed normally.
+Setting ``RATTER_URL`` (or passing ``url=``) opts into the legacy HTTP mode
+that posts to a standalone RATTER server (``POST /api/v1/ingest/events``).
+The HTTP mode remains available as an optional debugging/cross-runtime
+observability path.
 
-RATTER ingest endpoint: POST /api/v1/ingest/events
-Accepts: {events: [...]} (batch) or a single event object.
-No auth required for local development.
+Failures are logged locally but never propagate through the ROSIE execution
+path: RATTER is observational machinery, not execution authority.
 """
 from __future__ import annotations
 
@@ -28,6 +29,8 @@ __all__ = ["DEFAULT_RATTER_URL", "RatterSink", "map_peep_to_ratter_event"]
 
 logger = logging.getLogger(__name__)
 
+#: Reference URL for the optional HTTP mode.  Not used by default; the
+#: internal core is the default destination.
 DEFAULT_RATTER_URL = "http://localhost:3000/api/v1/ingest/events"
 DEFAULT_RUNTIME_ID = "rt_rosie_local"
 DEFAULT_INSTANCE_ID = "inst_rosie_local_01"
@@ -130,7 +133,13 @@ def map_peep_to_ratter_event(
 
 
 class RatterSink:
-    """Sends batches of PEEP events to a local RATTER instance.
+    """Routes PEEP events into the RATTER operational record.
+
+    Default mode writes into ROSIE's in-process RATTER core
+    (:func:`wrapper.ratter_core.get_ratter_core`); no HTTP service is
+    required.  Passing ``url=`` or setting the ``RATTER_URL`` environment
+    variable switches to the optional HTTP mode that posts to a standalone
+    RATTER server.
 
     All failures are caught and logged; the sink never raises into
     the ROSIE execution path.
@@ -143,10 +152,16 @@ class RatterSink:
         instance_id: str = DEFAULT_INSTANCE_ID,
         enabled: bool | None = None,
     ) -> None:
-        self._url = url or os.environ.get("RATTER_URL", DEFAULT_RATTER_URL)
+        env_url = os.environ.get("RATTER_URL")
+        self._url = url if url is not None else env_url
         self._runtime_id = runtime_id
         self._instance_id = instance_id
         self._timeout = float(os.environ.get("RATTER_HTTP_TIMEOUT_SECONDS", str(HTTP_TIMEOUT_SECONDS)))
+        self._core = None
+        if self._url is None:
+            from wrapper.ratter_core import get_ratter_core
+
+            self._core = get_ratter_core()
 
         if enabled is None:
             self._enabled = os.environ.get("RATTER_DISABLED", "").lower() not in ("1", "true", "yes")
@@ -154,8 +169,13 @@ class RatterSink:
             self._enabled = enabled
 
     @property
-    def url(self) -> str:
+    def url(self) -> str | None:
         return self._url
+
+    @property
+    def core(self):
+        """The internal RATTER core used by this sink, or None in HTTP mode."""
+        return self._core
 
     @property
     def runtime_id(self) -> str:
@@ -172,9 +192,12 @@ class RatterSink:
         return req
 
     def send(self, events: Iterable[dict[str, Any]]) -> bool:
-        """Send a batch of RATTER-format events to the ingest endpoint.
+        """Send a batch of RATTER-format events to the operational record.
 
-        Returns True if the HTTP request succeeded (2xx), False otherwise.
+        Internal mode ingests into the in-process RATTER core; HTTP mode
+        (``url=`` or ``RATTER_URL``) posts to a standalone RATTER server.
+
+        Returns True if every event was accepted, False otherwise.
         Never raises.
         """
         if not self._enabled:
@@ -184,6 +207,23 @@ class RatterSink:
         if not batch:
             return True
 
+        if self._url is None:
+            return self._send_internal(batch)
+        return self._send_http(batch)
+
+    def _send_internal(self, batch: list[dict[str, Any]]) -> bool:
+        """Ingest the batch into the internal RATTER core.  Never raises."""
+        try:
+            self._core.ingest_events(batch)
+            return True
+        except Exception as e:
+            logger.warning(
+                "RATTER internal ingest failed: %s (dropped %d events)", e, len(batch)
+            )
+            return False
+
+    def _send_http(self, batch: list[dict[str, Any]]) -> bool:
+        """POST the batch to a standalone RATTER server.  Never raises."""
         try:
             req = self._build_request(batch)
             with urllib.request.urlopen(req, timeout=self._timeout) as resp:
