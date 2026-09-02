@@ -128,23 +128,15 @@ class PeepShellExecutor:
         exit_code: int | None = None
         completed = False
         timed_out = False
-        command_id_for_ratter: str | None = None
 
         def _forward_to_ratter(events: list[PeepEvent]) -> None:
             """Forward PEEP events to RATTER (async, never blocking). Never raises."""
             if self._ratter_sink is None or not events:
                 return
-            nonlocal command_id_for_ratter
             try:
-                for e in events:
-                    if e.event_type == COMMAND_OBSERVED or (
-                        e.event_type == COMMAND_COMPLETED
-                        and command_id_for_ratter is None
-                    ):
-                        command_id_for_ratter = e.payload.get("command_id")
                 self._ratter_sink.send_peep_events(
                     events,
-                    command_id=command_id_for_ratter,
+                    command_id=command_id,
                     task_id=task_id,
                 )
             except Exception:
@@ -191,6 +183,7 @@ class PeepShellExecutor:
                 stderr_lines.extend(self._collect_stderr(event))
         finally:
             adapter.stop()
+            _forward_to_ratter(adapter.poll())
 
         return format_shell_result(
             command,
