@@ -151,16 +151,22 @@ The current local tool registry exposes bounded workspace discovery and file ope
 
 Explicit file and workspace tools resolve paths against a configured workspace root and reject traversal outside it.
 
-This applies to bounded operations such as:
+The workspace root is a hard filesystem boundary:
 
-- directory listing and search;
+every ROSIE file and path validation check in this layer resolves the target through a single shared safe-path helper, `_resolve_safe_path`, which canonicalizes the path against the configured workspace root and rejects anything that does not resolve strictly inside it. The same helper is also used by `_resolve_safe_path_no_follow` (for link-aware mutations) and by the persistent `$SCRATCH` workspace. The boundary accounts for `..` traversal, absolute paths, drive-qualified and UNC-style paths that leave the root, mixed separators, OS junctions/symlinks, and - implicitly - other reparse tricks because resolution of the final path is compared against the effective resolved workspace root, not just string prefix-matching.
+
+This applies to all ROSIE filesystem tools:
+
+- directory listing;
+- recursive file search;
 - file inspection;
-- write previews;
-- file writes;
-- targeted patches; and
+- previews and writes;
+- patching;
+- moving;
+- deletion;
 - path-filtered Git inspection.
 
-Shell execution is different: the workspace is its starting directory, not an OS-level sandbox. A command may access anything permitted to the operating-system identity running ROSIE.
+The shell execution boundary is narrower and must be stated explicitly: ROSIE's local shell executor starts every command in the workspace root as its working directory, and every tool argument that names a path inside the workspace is enforced against it through the same safe-path guard. But a PowerShell command itself is unrestricted user input: ROSIE cannot remove rights the host process user already allows, so a single command that references an absolute path outside the workspace can still reach it from the OS side. This is not presented as escaped-event detection; it is the precise shell-frontier limitation of a local-authority runtime that runs real PowerShell.
 
 See [SECURITY.md](SECURITY.md).
 

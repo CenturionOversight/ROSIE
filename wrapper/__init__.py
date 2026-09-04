@@ -16,6 +16,10 @@ Modules:
     context        — Deterministic conversation-history compaction.
     system_prompt  — The ROSIE operating system prompt.
     cli            — REPL engine built on LiteLLM.
+    ratter_core    — In-process RATTER operational record (ingress, sessions,
+                     timeline, integrity).
+    scratch        — Persistent `$SCRATCH` workspace (structured JSON pads
+                     and append-only JSONL pads).
 """
 
 from wrapper.policy import ApprovalPolicy, ExecutionPolicy
