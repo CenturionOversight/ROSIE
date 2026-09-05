@@ -73,8 +73,7 @@ def box_output(
     Returns:
         The bounded payload, or *text* unchanged when it already fits.
     """
-    if max_chars < 1:
-        max_chars = 1
+    max_chars = max(max_chars, 1)
 
     if len(text) <= max_chars:
         return text
@@ -203,8 +202,7 @@ def format_shell_result(
     oversized payloads are truncated head-and-tail with an explicit marker
     reporting their original size.
     """
-    if max_chars < 1:
-        max_chars = 1
+    max_chars = max(max_chars, 1)
 
     code = -1 if timed_out else (exit_code if exit_code is not None else -1)
 

@@ -26,7 +26,6 @@ import json
 import logging
 import os
 import re
-
 from itertools import count
 
 from wrapper.tools import _resolve_safe_path, get_workspace_root

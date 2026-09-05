@@ -58,15 +58,37 @@ __all__ = [
 
 
 # ---------------------------------------------------------------------------
-# Workspace root & policy management
-# ---------------------------------------------------------------------------
+# Workspace root & policy management: the module-level globals are the
+#  exit compatibility layer.  All reads must go through :func:`_session`.
+#  Callers that need their own runtime wrap it in a
+#  :class:`wrapper.runtime.RuntimeSession` and pass it to :func:`dispatch_tool`
+#  (via :meth:`RuntimeSession.tool_context`).
+from wrapper.runtime import RuntimeSession, get_default_session
 
 _workspace_root: Path | None = None
 _policy: ApprovalPolicy | None = None
 _shell_executor: Any = None
 
 
-def set_shell_executor(executor: Any) -> None:
+def _session() -> RuntimeSession:
+    """Return the session that owns the module's runtime state.
+
+    ``set_default_session`` swaps it in one call; module-level setters keep
+    their guarantee of writing to whichever session is currently live
+    (the application default).
+    """
+    return get_default_session()
+
+
+def set_default_session(session: RuntimeSession) -> None:
+    """Swap the session that module-level tools use."""
+    # Import-time loop guard; this must never raise.
+    from wrapper.runtime import _set_default_session as _swap_session
+
+    _swap_session(session)
+
+
+def set_shell_executor(executor: Any) -> RuntimeSession:  # return session, still compat
     """Set a custom shell executor for :func:`run_shell`.
 
     The executor must be a callable accepting (command: str, timeout: int)
@@ -75,6 +97,8 @@ def set_shell_executor(executor: Any) -> None:
     """
     global _shell_executor
     _shell_executor = executor
+    _session().set_shell_executor(executor)
+    return _session()
 
 
 def _default_shell_executor(command: str, timeout: int) -> str:
@@ -115,9 +139,13 @@ def _default_shell_executor(command: str, timeout: int) -> str:
 
 
 def set_workspace_root(path: str | Path) -> None:
-    """Set the workspace root directory for all tool operations."""
+    """Set the workspace root directory for all tool operations.
+
+    The session that currently owns the module-level globals is updated.
+    """
     global _workspace_root
     _workspace_root = Path(path).resolve()
+    _session().set_workspace_root(_workspace_root)
 
 
 def get_workspace_root() -> Path:
@@ -126,11 +154,16 @@ def get_workspace_root() -> Path:
     Raises:
         RuntimeError: If :func:`set_workspace_root` has not been called.
     """
-    if _workspace_root is None:
+    # Legacy module-global takes precedence for callers that set it via
+    # ``wrapper.tools._workspace_root`` assignment (e.g., tests).  When
+    # no legacy override is present, check the runtime session.
+    if _workspace_root is not None:
+        return _workspace_root
+    if _session().workspace_root is None:
         raise RuntimeError(
             "Workspace root has not been set. Call set_workspace_root() first."
         )
-    return _workspace_root
+    return _session().workspace_root
 
 
 def set_policy(policy: ApprovalPolicy) -> None:
@@ -141,6 +174,7 @@ def set_policy(policy: ApprovalPolicy) -> None:
     """
     global _policy
     _policy = policy
+    _session().set_policy(policy)
 
 
 # ---------------------------------------------------------------------------
