@@ -1250,12 +1250,19 @@ TOOL_SCHEMAS: list[dict[str, Any]] = [
 ]
 
 
-def dispatch_tool(name: str, args: dict[str, Any]) -> str:
+def dispatch_tool(
+    name: str,
+    args: dict[str, Any],
+    runtime: RuntimeSession | None = None,
+) -> str:
     """Execute a tool call with pydantic validation and policy enforcement.
 
     Args:
         name: The tool (function) name to invoke.
         args: Raw argument dictionary from the model.
+        runtime: Optional RuntimeSession whose workspace/policies/shell
+            executor should govern this dispatch.  When omitted, the current
+            module-level configuration is used (legacy behavior).
 
     Returns:
         The tool's textual result, or an ``ERROR: ...`` string.
@@ -1276,6 +1283,16 @@ def dispatch_tool(name: str, args: dict[str, Any]) -> str:
     else:
         call_args = args if args else {}
 
+    # For a runtime-scoped dispatch we bind the session's state over the
+    # module-level globals for the duration of this call.  This is the
+    # mechanism by which dispatch becomes runtime-aware without leaking
+    # across concurrent sessions.
+    session_state: tuple[Path | None, ApprovalPolicy | None, Any] = (
+        _workspace_root, _policy, _shell_executor
+    )
+    if runtime is not None:
+        _set_globals_from_runtime(runtime)
+
     try:
         result = func(**call_args)
         if result is None:
@@ -1287,3 +1304,32 @@ def dispatch_tool(name: str, args: dict[str, Any]) -> str:
         return f"ERROR (path violation): {exc}"
     except Exception as exc:
         return f"ERROR ({type(exc).__name__}): {exc}"
+    finally:
+        # Always restore the module-level state so nothing leaks across
+        # calls.
+        if runtime is not None:
+            _restore_from_globals(session_state)
+
+
+def _set_globals_from_runtime(runtime: RuntimeSession) -> None:
+    """Push the runtime's state into the module-level configuration store.
+
+    - workspace_root -> the runtime's configured workspace root (or unchanged
+      on the side of no override),
+    - policy -> the runtime's approval policy, or `None` if none is set,
+    - shell_executor -> the runtime's shell executor, or untouched on None.
+
+    These are overwritten for the duration of the dispatch and then restored
+    by :func:`_restore_from_globals`.
+    """
+    global _workspace_root, _policy, _shell_executor
+    _workspace_root = runtime.workspace_root if runtime.has_workspace() else _workspace_root
+    _policy = runtime.policy if runtime.policy is not None else _policy
+    if runtime.has_shell_executor():
+        _shell_executor = runtime.shell_executor
+
+
+def _restore_from_globals(state: tuple[Path | None, Any, Any]) -> None:
+    """Restore the module-level globals after a `dispatch_tool` call."""
+    global _workspace_root, _policy, _shell_executor
+    _workspace_root, _policy, _shell_executor = state

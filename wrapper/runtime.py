@@ -128,8 +128,12 @@ class RuntimeSession:
 
     @property
     def shell_executor(self) -> Any:
-        """The current shell executor, or ``None`` (default subprocess)."""
-        _check_open(self)
+        """The current shell executor, or ``None`` (default subprocess).
+
+        Read-only after close — it is acceptable for an observer to see
+        the executor once a runtime has been torn down; mutation endpoints
+        (:meth:`set_shell_executor`) are the boundary that rejects.
+        """
         return self._shell_executor
 
     def set_shell_executor(self, executor: Any) -> None:
