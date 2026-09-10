@@ -63,7 +63,11 @@ __all__ = [
 #  Callers that need their own runtime wrap it in a
 #  :class:`wrapper.runtime.RuntimeSession` and pass it to :func:`dispatch_tool`
 #  (via :meth:`RuntimeSession.tool_context`).
+# ---------------------------------------------------------------------------
+# Import our new runtime scope for dispatch and fall back when it's unused
+# ---------------------------------------------------------------------------
 from wrapper.runtime import RuntimeSession, get_default_session
+from wrapper.runtime_dispatch import RuntimeDispatchScope, current_runtime
 
 _workspace_root: Path | None = None
 _policy: ApprovalPolicy | None = None
@@ -71,12 +75,16 @@ _shell_executor: Any = None
 
 
 def _session() -> RuntimeSession:
-    """Return the session that owns the module's runtime state.
+    """Runtime this call should use.
 
-    ``set_default_session`` swaps it in one call; module-level setters keep
-    their guarantee of writing to whichever session is currently live
-    (the application default).
+    Resolution order:
+    1) a previously-registered dispatch scope (when `runtime=` is explicitly
+       supplied through dispatch_tool);
+    2) the process default session (unchanged behavior when stock init).
     """
+    rt = current_runtime()
+    if rt is not None:
+        return rt
     return get_default_session()
 
 
