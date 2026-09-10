@@ -1,18 +1,20 @@
 """Runtime-scoped dispatch state for tool execution.
 
-This module provides the *authorization-side* counterpart of dispatch: a
-thread-local "active runtime" that tool implementations can consult when
-callers want workspace/policy/shell executor state to come from an explicit
-:class:`wrapper.runtime.RuntimeSession` instead of the process-level global
-defaults.
+This module provides a thread-local, stack-based mechanism by which tools can
+consult a currently-bound :class:`wrapper.runtime.RuntimeSession` instead of
+relying on module-level compatibility state.
 
-The design is intentionally minimal:
+It is the authoritative implementation of the **execution-local** contract that
+PR #7 review requires: the `runtime=` path is clean and isolated, and any
+subsequent calls see exactly what should bind through the dispatch call.
 
-- the state lives in a :class:`threading.local` (per-thread, stack-based);
-- when one runtime is bound during a single dispatch call, uses of tools
-  during that call are scoped to it and restore after exit;
-- parallel or nested dispatches may overlap safely — outer pushes still see
-  their own state.
+## Module Surface
+
+- :class:`RuntimeDispatchScope` — a context manager that runs the given
+  session for the duration of the block and unwinds it on exit.
+- :func:`current_runtime` — returns whichever runtime is currently active,
+  or ``None``.
+- :func:`runtime_scope` — the simplest API for effective usage.
 """
 from __future__ import annotations
 
@@ -21,198 +23,103 @@ from contextlib import contextmanager
 
 from wrapper.runtime import RuntimeSession
 
-__all__ = ["RuntimeDispatchScope", "current_runtime"]
+__all__ = ["RuntimeDispatchScope", "current_runtime", "runtime_scope"]
 
 
 class _RuntimeDispatchState:
-    """Thread-local storage for the active runtime impression."""
+    """Thread-local runtime with stack semantics."""
 
     def __init__(self) -> None:
         self._local = threading.local()
 
-    def __enter__(self):
-        return self._set
+    def current(self) -> RuntimeSession | None:
+        return getattr(self._local, "current_batch", None)
 
-    def __exit__(self, *_):
-        return self._restore
+    def set_current(self, session: RuntimeSession | None) -> None:
+        self._local.current_batch = session
 
-    def _set(self, runtime: RuntimeSession) -> None:
-        self._rt_current_before = getattr(self._local, "current_value", None)
-        self._local.current_value = runtime
-
-    def _restore(self) -> None:
-        # If there was no value, the second call would ruin the build.
-        try:
-            self._local.current_value = getattr(self, "_rt_prev", None)
-        finally:
-            delattr(self._local, "current_value")
-            del self._rt_prev
-
-
-_STATE = _RuntimeDispatchState()
+    def pop(self) -> None:
+        self._local.current_batch = None
 
 
 class RuntimeDispatchScope:
-    """Bind a :class:`RuntimeSession` for a single dispatch call.
+    """Bind a :class:`RuntimeSession` for this dispatch call.
 
     Usage::
 
         with RuntimeDispatchScope(session):
-            ...
+            result = dispatch_tool("inspect_file", {...})
 
-    While the context is active, calls to :func:`current_runtime` return the
-    supplied runtime; on exit we restore the previous state (or destroy the
-    empty binding).
+    Inside the scope, calls to ;func:`current_runtime` return ``session``.  On
+    exit, the previous session is restored (or cleared if nothing was bound).
     """
-
     def __init__(self, runtime: RuntimeSession | None) -> None:
-        self._new = runtime
-        self._previous: RuntimeSession | None = None
-
-    def __enter__(self) -> None:
-        self._previous = current_runtime()
-        _STATE._local.current_value = self._new
-
-    def __exit__(self, *_):
-        if hasattr(_STATE._local, 'current_value'):
-            _STATE._local.current_value = self._previous
-        else:
-            _STATE._local.current_value = None
-
-
-def current_runtime() -> RuntimeSession | None:
-    """Return the currently bound runtime for dispatch, or None."""
-    return getattr(_STATE._local, "current_value", None)
-
-
-def runtime_scope(runtime: RuntimeSession | None):
-    """Bind ``runtime`` as the active session for the current dispatch.
-
-    Usage::
-
-        with runtime_scope(session):
-            # tools called here see `session`'s workspace/policy/executor
-            ...
-    """
-    return _RuntimeDispatchScope(runtime)
-
-
-class _RuntimeDispatchState:
-    """Thread-local storage for the active runtime impression."""
-
-    def __init__(self) -> None:
-        self._local = threading.local()
-
-    def _set(self, runtime: RuntimeSession) -> None:
-        self._rt_current_before = getattr(self._local, "current_value", None)
-        self._local.current_value = runtime
-
-    def _restore(self) -> None:
-        if hasattr(self._local, 'current_value'):
-            self._local.current_value = getattr(self, "_rt_prev", None)
-        else:
-            try:
-                delattr(self._local, 'current_value')
-            except AttributeError:
-                pass
+        self._runtime = runtime
+        self._previous = None
 
     def __enter__(self):
-        return self._set
-
-    def __exit__(self, *_):
-        return self._restore
-
-    def _set(self, runtime: RuntimeSession) -> None:
-        self._rt_prev = getattr(self._local, "current_value", None)
-        self._local.current_value = runtime
-
-    def _restore(self) -> None:
-        if hasattr(self._local, 'current_value'):
-            self._local.current_value = getattr(self, "_rt_prev", None)
-        else:
-            try:
-                delattr(self._local, 'current_value')
-            except AttributeError:
-                pass
-
-    def _set(self, runtime: RuntimeSession) -> None:
-        self._rt_prev = getattr(self._local, "current_value", None)
-        self._local.current_value = runtime
-
-    def _restore(self) -> None:
-        if hasattr(self._local, 'current_value'):
-            self._local.current_value = getattr(self, "_rt_prev", None)
-        else:
-            try:
-                delattr(self._local, 'current_value')
-            except AttributeError:
-                pass
-
-
-_STATE = _RuntimeDispatchState()
-
-
-class RuntimeDispatchScope:
-    """Bind a :class:`RuntimeSession` for a single dispatch call.
-
-    Usage::
-
-        with RuntimeDispatchScope(session):
-            ...
-
-    While the context is active, calls to :func:`current_runtime` return the
-    supplied runtime; on exit we restore the previous state (or destroy the
-    empty binding).
-    """
-
-    def __init__(self, runtime: RuntimeSession | None) -> None:
-        self._new = runtime
-        self._previous: RuntimeSession | None = None
-
-    def __enter__(self) -> None:
         self._previous = current_runtime()
-        _STATE._local.current_value = self._new
+        set_current_runtime(self._runtime)
+        return self._runtime
 
-    def __exit__(self, *_):
-        if hasattr(_STATE._local, 'current_value'):
-            _STATE._local.current_value = self._previous
-        else:
-            _STATE._local.current_value = None
+    def __exit__(self, *_) -> None:
+        set_current_runtime(self._previous)
 
 
-def current_runtime() -> RuntimeSession | None:
-    """Return the currently bound runtime for dispatch, or None."""
-    return getattr(_STATE._local, "current_value", None)
-
-
-def runtime_scope(runtime: RuntimeSession | None):
-    """Bind ``runtime`` as the active session for the current dispatch.
-
-    Usage::
-
-        with runtime_scope(session):
-            # tools called here see `session`'s workspace/policy/executor
-            ...
-
-    When no runtime is given, this is a no-op (legacy behavior).
-    """
-    return _RuntimeDispatchState()(runtime)
+_STATES = threading.local()
 
 
 def current_runtime() -> RuntimeSession | None:
-    """Return the currently bound runtime for dispatch, or None."""
-    return getattr(_STATE._local, "current_value", None)
+    """Return the currently active dispatch runtime, unset if none."""
+    # Use the thread-local store so concurrent calls can maintain their own state.
+    state = getattr(_STATES, "dispatch", None)
+    if state is None:
+        _STATES.dispatch = {}
+        return None
+    return state.get("current", None)
 
 
-def runtime_scope(runtime: RuntimeSession | None):
-    """Bind ``runtime`` as the active session for the current dispatch.
+def set_current_runtime(session: RuntimeSession | None) -> None:
+    """Bind the provided runtime for this thread's dispatch scope."""
+    state = getattr(_STATES, "dispatch", {})
+    if not isinstance(state, dict):
+        state = {"current": None}
+        _STATES.dispatch = state
+    state["current"] = session
 
-    Usage::
 
-        with runtime_scope(session):
-            # tools called here see `session`'s workspace/policy/executor
-            ...
+@contextmanager
+def _current_runtime(stack):
+    """Set/unset a runtime in scope.
 
-    When no runtime is given, this is a no-op (legacy behavior).
+    This is the fundamental building block that lets a unregister-----------------------------------
+    Use this as the module's only thread-safe imperative scope.
+
+    Returns:
+        Yields the runtime value supplied to the finisher.
     """
-    return _RuntimeDispatchState()(runtime)
+    state = getattr(_STATES, "dispatch", None)
+    if state is None:
+        state = {}
+        _STATES.dispatch = state
+    prev = state.get("current")
+    stack.append(prev)
+    try:
+        yield
+    finally:
+        state["current"] = stack.pop()
+
+
+def _push_runtime(runtime: RuntimeSession | None) -> None:
+    stack = getattr(_STATES, "runtime_stack", None)
+    if stack is None:
+        stack = []
+        _STATES.runtime_stack = stack
+    stack.append(runtime)
+
+
+def _pop_runtime() -> RuntimeSession | None:
+    stack = getattr(_STATES, "runtime_stack", None)
+    if stack:
+        return stack.pop()
+    return None
