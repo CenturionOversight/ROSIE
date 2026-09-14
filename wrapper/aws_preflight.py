@@ -5,8 +5,9 @@ Checks, in dependency order, without ever printing credential material:
     AWS_CREDENTIALS  - botocore credential chain resolves
     AWS_REGION       - an effective region is configured
     BEDROCK_CLIENT   - a Bedrock-Runtime client constructs successfully
-    MODEL_ACCESS     - the configured model can be addressed (InvokeMetaData
-                       via Converse-with-empty-input, no generation performed)
+    MODEL_ACCESS     - the configured model can be addressed (minimal one-user-
+                       message Converse probe; rejects-in-shape errors are
+                       surfaced verbatim as the next blocker)
 
 Dependent checks are skipped cleanly once an earlier one fails.  No success
 is invented: a check that cannot be performed is reported as FAIL/SKIPPED
@@ -17,7 +18,7 @@ from __future__ import annotations
 
 __all__ = ["MODEL_ID", "run_preflight"]
 
-MODEL_ID = "us.anthropic.claude-3-7-sonnet-20250219-v1:0"
+MODEL_ID = "us.amazon.nova-micro-v1:0"
 
 
 def _short(exc: Exception) -> str:
@@ -62,10 +63,13 @@ def run_preflight() -> bool:
         return False
 
     # --- model access ------------------------------------------------------
-    # InvokeMetaData-only probe: an empty-input Converse surfaces auth/model
-    # errors without performing any generation.
+    # Minimal valid Converse probe (Nova rejects an empty conversation, so a
+    # one-user-message request is the smallest shape that reaches the model).
     try:
-        client.converse(modelId=MODEL_ID, messages=[])
+        client.converse(
+            modelId=MODEL_ID,
+            messages=[{"role": "user", "content": [{"text": "ping"}]}],
+        )
         print(f"MODEL_ACCESS: PASS ({MODEL_ID})")
     except (ClientError, BotoCoreError) as exc:
         print(f"MODEL_ACCESS: FAIL ({MODEL_ID}) - {type(exc).__name__}: {_short(exc)}")
