@@ -1,247 +1,199 @@
 # Devpost Submission Draft
 
-This document is prepared submission content for Devpost. It is not itself a submitted Devpost entry.
+This document is prepared submission content for the AWS **Agents for Humans Hackathon**. It is not itself the submitted Devpost entry.
 
 ## Project title
 
-HACKASS
+ROSIE
 
-## Competition track
+## Track
 
-**Taskmaster**
-
-HACKASS is the user-facing software-creation program. The user supplies intent or an objective in ordinary language; HACKASS carries that request into an agentic engineering stack capable of performing real multi-step work rather than requiring the user to manually direct every operation.
+**Professional Agents**
 
 ## Short description
 
-A user-facing software-creation system that uses Google ADK and Gemini to turn ordinary human intent into multi-step engineering action through a structured execution stack.
+ROSIE is a local-machine execution and verification runtime that lets Strands Agents perform real software work through explicit human approval boundaries and truthful local evidence.
 
 ## Problem
 
-People should not need to think like software engineers before they can make software.
+Agentic software systems can plan and generate work in the cloud, but the final mile is different: software has to land on a real machine, execute in the intended workspace, respect local authority, and report what actually happened.
 
-Most AI coding systems still expose the machinery of software construction to the user: implementation details, terminal operations, file manipulation, frameworks, deployment choices, or a long conversation in which the user effectively becomes the orchestrator.
+That local boundary is where trust breaks down if the agent bypasses approval, rewrites the delivered artifact, runs in the wrong directory, or reports success without real execution evidence.
 
-HACKASS moves the human boundary upward.
+ROSIE is built for that boundary.
 
-The user tells HACKASS what they want. HACKASS carries the human-facing conversation and product decisions. The engineering and machine-action responsibilities are separated underneath it.
+## Who it is for
+
+ROSIE is for developers and teams using autonomous or semi-autonomous software agents who need those agents to operate on a real local workspace without giving up control over machine authority.
 
 ## What it does
 
-HACKASS accepts an objective from the browser and executes multi-step work through Google ADK with Gemini 3.7 Flash on Vertex AI.
+ROSIE receives a delivered software build, binds the runtime to the selected local workspace, exposes ROSIE-owned local capabilities to Strands Agents, and preserves the human approval boundary for consequential shell execution.
 
-The broader responsibility chain is:
+For the hackathon demo, HACKASS is the pre-existing upstream builder. ROSIE is the newly built local-agent layer.
 
 ```text
-Human
-  ↓
 HACKASS
-  intent / conversation / product decisions
-  ↓
-ARCHESTRATOR
-  engineering process / work / execution state / verification
-  ↓
-ROSIE
-  local-machine bridge / translation / controlled local action
-  ↓
-Local machine
+→ BuildPrint / deterministic delivery
+→ ROSIE local workspace
+→ Strands Agents
+→ Amazon Nova Micro / Bedrock
+→ ROSIE tool dispatch
+→ explicit shell approval
+→ proof execution + declared test command
+→ truthful result returned upstream
 ```
 
-For the current hackathon implementation, HACKASS delegates tool requests into disclosed pre-existing ARCHESTRATOR execution capabilities incorporated in the submission repository.
+## How Strands is used
 
-ROSIE is the local-machine bridge/runtime role: the layer that translates authorized engineering work into file, Git, shell, workspace, and runtime operations on the machine where the work lives.
+Strands Agents is not a decorative wrapper around a fixed subprocess.
 
-## Current hackathon execution path
+After delivery, the Strands agent receives ROSIE capabilities and chooses how to inspect and execute inside the bound workspace. In the verified live path it uses tools such as:
+
+- `rosie_inspect_git_status`
+- `rosie_run_shell`
+
+The execution still goes through ROSIE-owned dispatch and approval semantics.
+
+## Declared test-command verification
+
+The BuildPrint can declare the project's verification command, for example:
 
 ```text
-User
-→ HACKASS browser interface
-→ Firebase Hosting
-→ Cloud Run
-→ server.py / POST /execute
-→ HACKASS run_hackass()
-→ Google ADK
-→ Gemini 3.7 Flash / Vertex AI
-→ HACKASS bridge
-→ incorporated ARCHESTRATOR tool layer
-→ workspace available to deployed runtime
-→ result returned to HACKASS/browser
+python -m pytest
 ```
 
-The current Cloud Run demo operates on the workspace available inside the deployed runtime. It should not be represented as remotely controlling an unrelated user's laptop or desktop.
+That command is carried as build metadata without changing the frozen artifact hash. After delivery, Strands runs the declared verification through ROSIE in the same local workspace.
 
-The final ROSIE web-to-local role is the architectural bridge for that separate locality problem; that transport should only be described as live after it is implemented and verified.
+The resulting stdout, stderr, exit code, timeout state, and pass/fail status are surfaced truthfully.
 
-## Representative Taskmaster workflow
+## Human control
 
-1. the user gives HACKASS an objective;
-2. the system inspects the workspace for what it needs;
-3. Gemini selects and invokes real tools through Google ADK;
-4. tool results feed the next step;
-5. the system continues until the objective is resolved; and
-6. HACKASS returns the completed result to the user.
+The demonstrated policy is `auto-write`:
 
-## Google technology
+- file writes may be automatically approved;
+- shell commands still require explicit human approval.
 
-- **Gemini** — `gemini-3.7-flash` through Vertex AI
-- **Google ADK** — hackathon agent framework
-- **Vertex AI** — Gemini model execution
-- **Cloud Run** — containerized HTTP execution service
-- **Firebase Hosting** — browser surface and proxy for `/health` and `/execute`
-- **Artifact Registry** — container image storage
+The live proof used real approval prompts and explicit `y` confirmation. It did not use `yolo`.
 
-## Why Taskmaster
+## Deterministic-delivery invariant
 
-The implemented hackathon path is centered on autonomous task completion rather than guided conversation.
+ROSIE does not let Strands rewrite the delivered software during verification.
 
-The user supplies the objective. HACKASS and the execution stack handle the sequence of operations needed to complete it.
+The delivered artifact bytes remain authoritative. Strands operates after materialization to answer a different question: what happens when this exact delivered software is executed and tested locally?
 
-A demo objective can require the system to inspect repository information, execute a real command, interpret the result, compare it against an expected condition, and report whether the objective was satisfied.
+## AWS technology
 
-## System responsibilities
+- **Strands Agents** — agent framework
+- **Amazon Bedrock** — model runtime
+- **Amazon Nova Micro** — `us.amazon.nova-micro-v1:0` in the verified live path
 
-### HACKASS — user-facing program
+## Live proof
 
-HACKASS is where the human communicates with the system.
+The verified live integration demonstrated:
 
-It is responsible for carrying ordinary-language intent and product decisions into software work without requiring the human to operate the engineering machinery directly.
+- deterministic local delivery into the selected workspace;
+- Strands/Nova operating against that same workspace;
+- ROSIE-owned tool selection and dispatch;
+- real approval prompts;
+- execution of the delivered proof program;
+- execution of the BuildPrint-declared test command;
+- real pytest output and exit codes; and
+- final verification truth surfaced back to the upstream build flow.
 
-### ARCHESTRATOR — engineering engine
-
-ARCHESTRATOR is the structured engineering layer underneath HACKASS.
-
-It is pre-existing software incorporated into this hackathon project and disclosed as such.
-
-Its responsibility is the engineering process around software construction rather than the human-facing product conversation.
-
-### ROSIE — local-machine bridge/runtime
-
-ROSIE is the locality layer.
-
-It translates authorized engineering actions into capabilities on the machine where the work lives, including workspace discovery, files, Git, shell, and other local actions.
-
-The current repository includes the local action surface used in the hackathon integration, but the deployed Cloud Run demo should not be confused with a completed transport to an external end-user machine.
+The final composite proof passed both verification checks.
 
 ## What was built during the hackathon
 
-- Google ADK integration in the `hackass/` package;
-- Gemini 3.7 Flash Vertex AI execution path;
-- ADK ↔ incorporated ARCHESTRATOR tool bridge;
-- browser-accessible `POST /execute` HTTP endpoint;
-- Firebase Hosting `/execute` routing to Cloud Run;
-- browser HACKASS task-submission interface;
-- Cloud Run container deployment;
-- concurrency protection around shared execution state;
-- focused Google integration and HTTP-boundary tests; and
-- hackathon deployment, architecture, provenance, and submission documentation.
+- ROSIE runtime/session ownership used by the local agent path;
+- Strands Agents integration;
+- Bedrock / Nova Micro model path;
+- ROSIE capability adapters for Strands;
+- same-workspace runtime binding;
+- post-delivery proof execution;
+- BuildPrint-declared test-command execution;
+- bounded timeout behavior;
+- truthful composite verification results; and
+- the end-to-end HACKASS delivery → ROSIE → Strands/Nova demo integration.
 
-## Pre-existing code disclosure
+## Pre-existing work disclosure
 
-HACKASS incorporates pre-existing ARCHESTRATOR software in the `wrapper/` package.
+**HACKASS is pre-existing software.**
 
-The disclosed foundation includes the iterative execution loop, tool execution, approval policies, file and workspace operations, shell execution, Git inspection, provider abstraction, and existing tests around that foundation.
+It is used in the demo as the upstream software-construction and delivery system. It provides the build and BuildPrint metadata that ROSIE receives.
 
-These capabilities are not represented as work created during the hackathon.
+The Agents for Humans contribution is the ROSIE local-agent execution/verification layer and its Strands/AWS integration.
 
-The hackathon-created HACKASS layer adds the Google ADK, Gemini, HTTP, browser, bridge, cloud deployment, and submission-specific path around the disclosed foundation.
+The repository also contains legacy Google hackathon assets from earlier development. Those assets are not represented as new Agents for Humans work and are not the technology path being submitted here.
 
-See `docs/HACKATHON.md` for the detailed provenance record.
+## Why Professional Agents
+
+ROSIE performs professional software-development work at the local execution boundary: inspecting a real workspace, invoking real tools, running verification commands, preserving approval controls, and returning evidence that can be used by an upstream autonomous builder.
 
 ## Challenges
 
-### Keeping the product boundary above the engineering machinery
+### Preserving local authority
 
-The user-facing problem is not simply tool calling. HACKASS needs to let a person communicate in product intent while keeping engineering state and machine authority in separate layers underneath it.
+A useful local agent must be capable enough to run real commands without silently turning machine authority over to the model. ROSIE keeps approval enforcement in the execution layer rather than relying only on prompting.
 
-### Bridging Google ADK into an existing engineering foundation
+### Preserving artifact identity
 
-Google ADK manages the hackathon agent/model path, while the incorporated ARCHESTRATOR foundation already owns real execution capabilities. The HACKASS bridge delegates tool requests rather than duplicating the execution logic.
+Verification must not invalidate the evidence chain by changing the software being tested. The delivered artifact stays frozen while Strands operates as a post-delivery execution/verification layer.
 
-### Locality
+### Correct workspace identity
 
-A cloud process can operate its own runtime workspace, but that is not the same as operating the user's separate local machine.
+The delivery workspace, ROSIE RuntimeSession, Strands agent, and shell executor must all refer to the same project location. The submission path binds that workspace explicitly rather than creating a second temporary project copy.
 
-ROSIE exists for that locality boundary: it is the local bridge/runtime that can expose authorized machine capabilities without making the cloud application itself the local execution authority.
+### Truthful failure handling
 
-### Shared execution state
-
-The current incorporated execution layer uses shared process state for workspace and policy configuration. The browser-facing server serializes `/execute` operations to prevent concurrent requests from racing over that state.
+A failed command, timeout, missing credential, or failed materialization must remain a failure in the evidence chain. ROSIE reports the real result rather than manufacturing a successful completion.
 
 ## Accomplishments
 
-- HACKASS provides a live browser-facing task surface;
-- Google ADK and Gemini are genuinely in the execution path;
-- real tools are invoked rather than simulated;
-- multi-step Taskmaster behavior works through the deployed endpoint;
-- the pre-existing ARCHESTRATOR boundary is explicitly disclosed; and
-- the product architecture now separates HACKASS, ARCHESTRATOR, and ROSIE by responsibility.
-
-## What was learned
-
-The important problem is not adding another chat agent.
-
-The system becomes more useful when the boundaries are explicit:
-
-- the human should communicate with a product layer;
-- engineering state should live in an engineering layer; and
-- machine authority should cross through a locality layer designed for that job.
-
-That separation makes the model one source of intelligence inside a larger software-construction system rather than forcing the model, the engineering process, the user interface, and the local machine into one component.
-
-## What's next
-
-The next architectural step is to complete the ROSIE web-to-local attachment so HACKASS and ARCHESTRATOR can hand authorized engineering work to a ROSIE process running on the user's actual machine while preserving local approval and workspace boundaries.
+- real Strands Agents integration;
+- real Amazon Nova Micro turns through Bedrock;
+- real local ROSIE tool use;
+- real human approval prompts;
+- deterministic artifact identity preserved;
+- declared project tests executed after delivery;
+- stdout and exit codes surfaced as evidence; and
+- full end-to-end verification returned to the upstream builder.
 
 ## Repository
 
-https://github.com/ArchePersona/ROSIE
-
-## Hosted project
-
-https://rosie-fire.web.app
+https://github.com/CenturionOversight/ROSIE
 
 ## Demo video
 
-**Pending recording/upload.** Maximum four minutes.
+Pending recording/upload. Maximum five minutes.
 
-The demo should establish HACKASS as the program the user is interacting with, show one real multi-step Taskmaster objective completing, identify the disclosed ARCHESTRATOR engineering/execution foundation, briefly explain ROSIE as the local-machine bridge/runtime, and show clear Google Cloud / ADK / Gemini proof.
+Recommended demo spine:
 
-### Planned live demo task
-
-A safe deterministic example is:
-
-> Read the README.md file, find the expected test count, then run the test suite and verify the results match. Report what you found.
-
-This demonstrates inspection, real execution, interpretation, and completion without requiring the video to claim an unverified external-machine connection.
+1. state the local-agent problem;
+2. show HACKASS producing/delivering a build;
+3. show ROSIE attached to the local workspace;
+4. show Strands/Nova selecting ROSIE execution capability;
+5. show the real approval boundary;
+6. show proof execution;
+7. show the declared pytest command and real passing output; and
+8. show the verification result returned upstream.
 
 ## Architecture diagram
 
-See `docs/ARCHITECTURE.md`.
+See [ARCHITECTURE.md](ARCHITECTURE.md).
 
-The responsibility architecture is:
+## Submission checklist
 
-```text
-HACKASS → ARCHESTRATOR → ROSIE → local machine
-```
-
-The current hackathon deployment path is separately documented so the submission does not confuse product architecture with the current Cloud Run runtime boundary.
-
-## Final submission checklist
-
-- [x] Taskmaster selected
-- [x] Google ADK integrated
-- [x] Gemini 3.7 Flash integrated
-- [x] Google Cloud infrastructure live
-- [x] browser execution live
-- [x] ARCHESTRATOR pre-existing code disclosed
-- [x] HACKASS / ARCHESTRATOR / ROSIE responsibilities documented
-- [x] current Cloud Run locality limitation documented
-- [x] public repository available
-- [x] architecture documented
-- [ ] record demo video
-- [ ] upload public demo video
-- [ ] add demo URL here and to Devpost
-- [ ] perform final live verification
-- [ ] paste/finalize Devpost fields
+- [x] public repository
+- [x] MIT license
+- [x] Strands Agents in the execution path
+- [x] Amazon Bedrock / Nova Micro verified live
+- [x] pre-existing HACKASS disclosed
+- [x] README/setup documentation updated
+- [ ] publish the current Strands branch as the submission/default repository state
+- [ ] finalize architecture diagram asset
+- [ ] record/upload public demo video
+- [ ] add video URL
+- [ ] enter AWS Builder ID email
+- [ ] finalize Devpost fields
 - [ ] submit before deadline
-- [ ] freeze submitted repo/app/submission during judging as required
