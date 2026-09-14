@@ -1,26 +1,44 @@
-# Models and Fallback
+# Models and Provider Boundaries
 
-ROSIE's product responsibility is the local-machine bridge/runtime. It does not require ROSIE to own the primary reasoning model in the complete HACKASS → ARCHESTRATOR → ROSIE stack.
+ROSIE's durable responsibility is local-machine execution and authority. It does not require one fixed reasoning provider.
 
-The **standalone ROSIE CLI** uses LiteLLM as its model-provider abstraction so the local runtime can also operate independently for development, testing, and direct local use.
+Two model paths currently exist in the repository.
 
-## Architecture distinction
+## Agents for Humans submission path
+
+The hackathon path uses:
 
 ```text
-Complete product path:
-HACKASS → ARCHESTRATOR → ROSIE → local machine
-
-Standalone ROSIE mode:
-local operator → LiteLLM/model → ROSIE local tools → local machine
+Strands Agents
+→ Amazon Bedrock
+→ Amazon Nova Micro
+→ ROSIE capability adapters
+→ ROSIE runtime dispatch
+→ local machine
 ```
 
-In the Google hackathon HACKASS path, Google ADK and Gemini provide the hackathon reasoning/framework path and delegate authorized actions into the incorporated local execution surface.
+The verified live model is:
 
-## Default standalone model
+```text
+us.amazon.nova-micro-v1:0
+```
 
-The configured standalone model depends on the current runtime configuration. See the root README and `wrapper/cli.py` for the current default used by the repository.
+Strands owns the agent turn. ROSIE owns the local capability boundary.
 
-## Selecting a standalone model
+The model can select exposed ROSIE tools, but execution still routes through ROSIE's runtime/session ownership, approval policy, and executor.
+
+## Standalone ROSIE path
+
+ROSIE can also operate independently through the local CLI using LiteLLM as a provider abstraction.
+
+```text
+local operator
+→ LiteLLM/model
+→ ROSIE local tools
+→ local machine
+```
+
+Select a standalone model with:
 
 ```bash
 python -m wrapper.cli . --model <litellm-model-string>
@@ -32,42 +50,34 @@ Example:
 python -m wrapper.cli . --model ollama/qwen2.5-coder:7b
 ```
 
-Generic Gemini access through LiteLLM is a standalone provider path. It is not, by itself, the Google Agent Framework integration used by HACKASS for the hackathon.
-
-## Disabling fallback
+Disable standalone fallback models with:
 
 ```bash
 python -m wrapper.cli . --no-fallback
 ```
 
-With this flag, only the selected primary model is attempted.
-
-## Fallback behavior
-
-Unless `--no-fallback` is supplied, the standalone CLI can build a model chain from the selected primary model followed by configured fallback models that are not duplicates of the primary.
-
-The exact configured list is implementation state and should be read from the current source rather than treated as part of ROSIE's architectural identity.
-
-## Provider failures
-
-The standalone `_completion()` path can fall through to another configured model for selected provider/runtime failures such as authentication, rate limits, service availability, connection failure, missing models, and supported upstream API errors.
-
-Other API errors are surfaced rather than silently redirected.
-
-## Environment variables
-
-Standalone provider credentials may be supplied through provider-specific environment variables supported by the configured LiteLLM path.
-
-Do not treat those credentials as part of the web-to-local transport architecture. A future attached ROSIE process should preserve an explicit boundary between local machine authority and whichever reasoning provider the higher-level system uses.
-
-## Tool calling
-
-Standalone model requests receive the local `TOOL_SCHEMAS` so the model can request ROSIE actions.
-
-Models used in standalone ROSIE mode therefore need a compatible tool/function-calling path for full local agentic execution.
-
 ## Provider independence
 
-The local action layer is intentionally separable from any single provider.
+Provider-specific logic is kept outside the core local-action contracts.
 
-That is important to ROSIE's role: the bridge to the machine should remain usable even as the intelligence provider or higher-level agent framework changes.
+ROSIE's core semantics are:
+
+- bind the correct workspace;
+- expose bounded local capabilities;
+- enforce approval policy;
+- execute through the owned runtime/executor; and
+- return truthful evidence.
+
+The reasoning provider can change without redefining those responsibilities.
+
+## Credentials
+
+The Strands submission path requires AWS credentials/configuration that can access the selected Bedrock model.
+
+Standalone providers use the credentials required by their configured LiteLLM provider.
+
+Credentials are runtime configuration, not model-visible data and not part of ROSIE's architectural identity.
+
+## Legacy provider assets
+
+The repository also contains older Google ADK / Gemini hackathon assets from prior development. They are not the model/framework path submitted for the AWS Agents for Humans Hackathon.
