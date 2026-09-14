@@ -14,8 +14,14 @@ Ownership boundaries:
   :mod:`wrapper.strands_runner`, not here.  Swapping model providers must not
   require changing ROSIE tool integration.
 
-M1B scope is read-only: only ``inspect_git_status`` is exposed.  Mutation
-tools (write/patch/move/delete/shell) are deliberately not bridged.
+M1B proved the read-only leg (``inspect_git_status``); M3 adds exactly one
+mutating capability: ``write_file``.  Exposed ROSIE tools:
+
+- ``rosie_inspect_git_status`` — read-only Git status of the workspace;
+- ``rosie_write_file`` — UTF-8 text write inside the workspace boundary.
+
+Deliberately not bridged: ``run_shell``, ``apply_patch``, ``move_path``,
+``delete_path``.
 """
 from __future__ import annotations
 
@@ -26,7 +32,7 @@ from strands.tools.decorator import tool
 from wrapper.runtime import RuntimeSession
 from wrapper.tools import dispatch_tool
 
-__all__ = ["create_rosie_tools", "rosie_inspect_git_status"]
+__all__ = ["create_rosie_tools", "rosie_inspect_git_status", "rosie_write_file"]
 
 
 def rosie_inspect_git_status(session: RuntimeSession):
@@ -61,6 +67,42 @@ def rosie_inspect_git_status(session: RuntimeSession):
     return _rosie_inspect_git_status
 
 
+def rosie_write_file(session: RuntimeSession):
+    """Create a Strands tool that writes a UTF-8 text file via ROSIE.
+
+    The returned callable is a Strands-decorated tool whose implementation
+    delegates to ``wrapper.tools.dispatch_tool("write_file", ...)`` with
+    *session* as the runtime owner.  It performs no filesystem operation of
+    its own — ROSIE owns path containment, parent-directory creation, and
+    the approval policy.
+
+    Args:
+        session: RuntimeSession owning the target workspace.
+
+    Returns:
+        A Strands tool callable.
+    """
+
+    @tool(
+        name="rosie_write_file",
+        description=(
+            "Write UTF-8 text to a file inside the ROSIE-managed workspace. "
+            "The path is workspace-relative (e.g. 'notes/summary.txt'); "
+            "escaping the workspace is blocked. Parent directories are "
+            "created as needed."
+        ),
+    )
+    def _rosie_write_file(relative_path: str, content: str) -> str:
+        """Delegate to the ROSIE dispatch boundary under the session."""
+        return dispatch_tool(
+            "write_file",
+            {"relative_path": relative_path, "content": content},
+            runtime=session,
+        )
+
+    return _rosie_write_file
+
+
 def create_rosie_tools(session: RuntimeSession) -> list[Any]:
     """Create the M1B ROSIE tool set for a Strands Agent.
 
@@ -68,8 +110,10 @@ def create_rosie_tools(session: RuntimeSession) -> list[Any]:
         session: RuntimeSession owning the selected workspace.
 
     Returns:
-        List of Strands tool callables (read-only in M1B).
+        List of Strands tool callables (read-only Git status + workspace-
+        bounded text write).
     """
     return [
         rosie_inspect_git_status(session),
+        rosie_write_file(session),
     ]

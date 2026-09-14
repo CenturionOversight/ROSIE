@@ -1,4 +1,4 @@
-"""M1B offline verification of the Strands → ROSIE execution seam.
+"""M1B/M3 offline verification of the Strands → ROSIE execution seam.
 
 OFFLINE / STUB MODEL — this test uses a deterministic stub Strands Model
 instead of Amazon Bedrock.  It proves:
@@ -27,7 +27,11 @@ from strands.agent import Agent  # noqa: E402
 from strands.models.model import Model  # noqa: E402
 
 from wrapper.runtime import RuntimeSession  # noqa: E402
-from wrapper.strands_bridge import create_rosie_tools, rosie_inspect_git_status  # noqa: E402
+from wrapper.strands_bridge import (  # noqa: E402
+    create_rosie_tools,
+    rosie_inspect_git_status,
+    rosie_write_file,
+)
 
 TOOL_USE_ID = "m1b-stub-tool-use-1"
 
@@ -178,7 +182,11 @@ def test_offline_agent_selects_rosie_tool(session, monkeypatch, git_status_stub)
     _dispatch_spy(monkeypatch, dispatch_calls)
 
     tools = create_rosie_tools(session)
-    assert len(tools) == 1, "M1B must expose exactly one read-only ROSIE tool"
+    tool_names = [getattr(t, "tool_name") for t in tools]
+    assert tool_names == [
+        "rosie_inspect_git_status",
+        "rosie_write_file",
+    ], "M3 exposes exactly the read-only status tool + the bounded write tool"
 
     stub = _StubToolUseModel()
     agent = Agent(
@@ -192,8 +200,11 @@ def test_offline_agent_selects_rosie_tool(session, monkeypatch, git_status_stub)
         "clean or has changes."
     )
 
-    # Strands saw the ROSIE tool spec and chose it autonomously (one turn).
-    assert stub.stream_calls[0]["tool_spec_names"] == ["rosie_inspect_git_status"]
+    # Strands saw the ROSIE tool specs and chose the status tool autonomously (one turn).
+    assert set(stub.stream_calls[0]["tool_spec_names"]) == {
+        "rosie_inspect_git_status",
+        "rosie_write_file",
+    }
 
     # The call reached wrapper.tools.dispatch_tool exactly once.
     assert len(dispatch_calls) == 1
@@ -222,6 +233,120 @@ def test_zero_arg_tool_input_is_valid_json(session, git_status_stub):
 
     out = dispatch_tool("inspect_git_status", {}, runtime=session)
     assert out == _GIT_STATUS_OUT.strip()
+
+
+def test_rosie_write_file_forwards_to_dispatch(session, monkeypatch):
+    """Focused M3 checks: the rosie_write_file adapter forwards the supplied
+    path/content to dispatch_tool and passes the SAME RuntimeSession as the
+    runtime owner; the real ROSIE write_file implementation then creates the
+    file inside the session workspace (parent dirs included)."""
+    dispatch_calls: list[dict[str, Any]] = []
+    _dispatch_spy(monkeypatch, dispatch_calls)
+
+    tool = rosie_write_file(session)
+    out = tool(relative_path="m3/offline.txt", content="hello rosie")
+
+    assert dispatch_calls == [
+        {
+            "name": "write_file",
+            "args": {
+                "relative_path": "m3/offline.txt",
+                "content": "hello rosie",
+            },
+            "runtime": session,
+        }
+    ]
+    written = session.workspace_root / "m3" / "offline.txt"
+    assert written.is_file()
+    assert written.read_text(encoding="utf-8") == "hello rosie"
+    assert "Successfully wrote 1 line(s)" in out
+
+
+class _StubWriteModel(_StubToolUseModel):
+    """OFFLINE variant: turn 1 selects rosie_write_file, turn 2 answers."""
+
+    async def stream(self, messages, tool_specs, system_prompt, **kwargs):
+        saw_tool_result = any(
+            block.get("toolResult")
+            for msg in messages
+            for block in msg.get("content", [])
+        )
+        self.stream_calls.append(
+            {
+                "tool_spec_names": [spec.get("name") for spec in (tool_specs or [])],
+                "saw_tool_result": saw_tool_result,
+            }
+        )
+        if not saw_tool_result:
+            yield {"messageStart": {"role": "assistant"}}
+            yield {
+                "contentBlockStart": {
+                    "start": {
+                        "toolUse": {
+                            "toolUseId": "m3-stub-write-1",
+                            "name": "rosie_write_file",
+                        }
+                    }
+                }
+            }
+            yield {
+                "contentBlockDelta": {
+                    "delta": {
+                        "toolUse": {
+                            "input": json.dumps(
+                                {
+                                    "relative_path": "m3_agent_proof.txt",
+                                    "content": "ROSIE_LOCAL_WRITE_PROVEN",
+                                }
+                            )
+                        }
+                    }
+                }
+            }
+            yield {"contentBlockStop": {}}
+            yield {"messageStop": {"stopReason": "tool_use"}}
+        else:
+            yield {"messageStart": {"role": "assistant"}}
+            yield {
+                "contentBlockDelta": {
+                    "delta": {"text": "OFFLINE-STUB write complete"}
+                }
+            }
+            yield {"contentBlockStop": {}}
+            yield {"messageStop": {"stopReason": "end_turn"}}
+
+
+def test_offline_agent_write_flow(session, monkeypatch):
+    """OFFLINE / STUB MODEL — the real Strands agent loop selects
+    rosie_write_file, the call reaches dispatch_tool(..., runtime=session),
+    and ROSIE's real write_file creates the file in the session workspace."""
+    dispatch_calls: list[dict[str, Any]] = []
+    _dispatch_spy(monkeypatch, dispatch_calls)
+
+    stub = _StubWriteModel()
+    agent = Agent(
+        model=stub,
+        tools=create_rosie_tools(session),
+        system_prompt="You are ROSIE's workspace assistant.",
+        callback_handler=None,
+    )
+    result = agent(
+        "Create a file named m3_agent_proof.txt in this workspace containing "
+        "exactly ROSIE_LOCAL_WRITE_PROVEN."
+    )
+
+    assert len(dispatch_calls) == 1
+    call = dispatch_calls[0]
+    assert call["name"] == "write_file"
+    assert call["args"] == {
+        "relative_path": "m3_agent_proof.txt",
+        "content": "ROSIE_LOCAL_WRITE_PROVEN",
+    }
+    assert call["runtime"] is session
+
+    proof = session.workspace_root / "m3_agent_proof.txt"
+    assert proof.read_text(encoding="utf-8") == "ROSIE_LOCAL_WRITE_PROVEN"
+    assert "OFFLINE-STUB write complete" in str(result)
 
 
 def test_non_repo_workspace_error_propagates(session):
