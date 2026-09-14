@@ -1,21 +1,36 @@
 """Strands-backed local verification of a delivered workspace (M5).
 
-One reusable ROSIE entry point: bind a :class:`~wrapper.runtime.RuntimeSession`
-to the *delivered* workspace, run ONE real Amazon Strands agent turn
-(Bedrock / Nova Micro), let the model select the exposed ROSIE capabilities,
-and return a bounded, truthful result dictionary.
+Reusable ROSIE entry point: bind a :class:`~wrapper.runtime.RuntimeSession`
+to the *delivered* workspace, run real Amazon Strands agent turns
+(Bedrock / Nova Micro), let the model select the exposed ROSIE
+capabilities, and return a bounded, truthful result dictionary.
+
+Two bounded checks ride one entry point:
+
+- **proof program** — locate and execute the delivered proof program
+  (default ``m5_hackass_proof.py``) and require its expected stdout with
+  exit code 0;
+- **declared test command** (optional) — when the caller passes the
+  BuildPrint's declared test command (e.g. ``python -m pytest``), a
+  second bounded agent turn executes it in the SAME workspace and the
+  real exit code decides the check. The command string is data, never
+  interpreted by the model beyond selecting the execution capability.
 
 Ownership boundaries:
 
 - The caller (the ROSIE local bridge) owns when verification runs; this
-  module owns the agent turn. The delivered artifact is never modified
+  module owns the agent turns. The delivered artifact is never modified
   here — the model is instructed to execute, not rewrite, and the only
   bridged mutating capability carries ROSIE's real approval policy.
 - No mock or fallback provider: Bedrock unavailability is a truthful
   FAILED result, never a synthetic success.
-- The result reports real stdout/stderr/exit code parsed from the ROSIE
+- Results report real stdout/stderr/exit code parsed from the ROSIE
   shell tool result blocks, plus the tool-selection evidence from the
   Strands event-loop metrics. Nothing is invented.
+
+``timeout_s`` bounds EACH agent turn (hard cancel via the Strands cancel
+signal); with a declared test command the worst case is two bounded
+turns, never an unbounded run.
 
 This module is offline-testable: pass ``agent_factory`` to substitute a
 fake agent (no Amazon call). Live runs use the default real factory.
@@ -36,6 +51,8 @@ __all__ = [
     "DEFAULT_PROOF_FILENAME",
     "VERIFY_SYSTEM_PROMPT_TEMPLATE",
     "VERIFY_PROMPT_TEMPLATE",
+    "TEST_SYSTEM_PROMPT_TEMPLATE",
+    "TEST_PROMPT_TEMPLATE",
     "run_strands_verification",
 ]
 
@@ -59,6 +76,24 @@ VERIFY_PROMPT_TEMPLATE = (
     "workspace, execute it, and return its real stdout and exit code."
 )
 
+TEST_SYSTEM_PROMPT_TEMPLATE = (
+    "You are ROSIE's local build-verification agent. The workspace "
+    "contains a freshly delivered build whose BuildPrint declared the "
+    "test command: {command}. Your only job: run exactly that command "
+    "from the project root within the workspace using the rosie_run_shell "
+    "tool (locate the project root first if the files sit in a "
+    "subdirectory such as dist/), and report the real stdout and exit "
+    "code. The rosie_run_shell tool accepts an optional integer timeout "
+    "parameter in seconds — set one appropriate for the command (a test "
+    "suite may need a few minutes). Do NOT create, modify, or delete any "
+    "files. Do NOT invent a different command."
+)
+
+TEST_PROMPT_TEMPLATE = (
+    "Run the declared test command '{command}' in this workspace and "
+    "return its real stdout and exit code."
+)
+
 
 def _clip(text: str, limit: int = _MAX_EVIDENCE_CHARS) -> str:
     text = str(text or "")
@@ -68,7 +103,8 @@ def _clip(text: str, limit: int = _MAX_EVIDENCE_CHARS) -> str:
 
 
 def _default_agent_factory(session: RuntimeSession, model_id: str,
-                           region: str | None) -> Any:
+                           region: str | None,
+                           system_prompt: str | None = None) -> Any:
     """Real Amazon-backed agent construction (isolated provider wiring)."""
     from strands import Agent
     from strands.models import BedrockModel
@@ -77,7 +113,8 @@ def _default_agent_factory(session: RuntimeSession, model_id: str,
     return Agent(
         model=model,
         tools=create_rosie_tools(session),
-        system_prompt=VERIFY_SYSTEM_PROMPT_TEMPLATE.format(
+        system_prompt=system_prompt
+        or VERIFY_SYSTEM_PROMPT_TEMPLATE.format(
             filename=DEFAULT_PROOF_FILENAME),
     )
 
@@ -159,34 +196,27 @@ def _failed(stage: str, detail: str, **extra: Any) -> dict[str, Any]:
     return result
 
 
-def run_strands_verification(
-    workspace: str | Path,
+def _run_agent_turn(
+    workspace_path: Path,
     *,
-    policy_name: str = "auto-write",
-    expected_stdout: str = "HACKASS_STRANDS_ROSIE_PROVEN",
-    proof_filename: str = DEFAULT_PROOF_FILENAME,
-    model_id: str = DEFAULT_MODEL_ID,
-    region: str | None = None,
-    timeout_s: float = DEFAULT_TIMEOUT_S,
-    agent_factory: Callable[..., Any] | None = None,
-    shell_executor: Any = None,
+    prompt: str,
+    system_prompt: str,
+    expected_stdout: str | None,
+    policy_name: str,
+    model_id: str,
+    region: str | None,
+    timeout_s: float,
+    agent_factory: Callable[..., Any] | None,
+    shell_executor: Any,
 ) -> dict[str, Any]:
-    """Run one Strands/Nova verification turn against *workspace*.
+    """One bounded Strands agent turn against *workspace_path*.
 
-    ``shell_executor`` is a test seam only (ROSIE's established
-    ``RuntimeSession(shell_executor=...)`` pattern); live callers never
-    pass it, so the session's default executor runs and the real approval
-    policy governs every shell command.
-
-    Returns a bounded dictionary (never raises): ``status`` PASSED only
-    when the selected ROSIE shell execution really produced *expected_stdout*
-    with exit code 0. Any failure is truthful and names its stage.
+    Binds a fresh RuntimeSession to the delivered workspace, runs the
+    agent with ROSIE's real dispatch boundary, and evaluates the last
+    ROSIE shell execution. When *expected_stdout* is given the stdout
+    must contain it; otherwise the real exit code alone decides. Never
+    raises.
     """
-    factory = agent_factory or _default_agent_factory
-    workspace_path = Path(workspace).resolve()
-    if not workspace_path.is_dir():
-        return _failed("runtime", f"workspace does not exist: {workspace_path}")
-
     session = RuntimeSession(
         workspace=workspace_path,
         policy=ApprovalPolicy(ExecutionPolicy(policy_name)),
@@ -195,19 +225,24 @@ def run_strands_verification(
     cancel = threading.Event()
     watchdog: threading.Timer | None = None
     try:
-        try:
-            agent = factory(session, model_id, region)
-        except Exception as exc:
-            return _failed("agent_build",
-                           f"{type(exc).__name__}: {exc}",
-                           model_id=model_id)
-        if watchdog is None and timeout_s and timeout_s > 0:
+        if agent_factory is None:
+            agent = _default_agent_factory(
+                session, model_id, region, system_prompt=system_prompt)
+        else:
+            agent = agent_factory(session, model_id, region)
+    except Exception as exc:
+        return _failed("agent_build",
+                       f"{type(exc).__name__}: {exc}",
+                       model_id=model_id)
+
+    try:
+        if timeout_s and timeout_s > 0:
             watchdog = threading.Timer(timeout_s, cancel.set)
             watchdog.daemon = True
             watchdog.start()
         try:
             result = agent(
-                VERIFY_PROMPT_TEMPLATE.format(filename=proof_filename),
+                prompt,
                 cancel_signal=cancel,
             )
         except Exception as exc:
@@ -249,15 +284,25 @@ def run_strands_verification(
         stdout = _clip(executed["stdout"])
         stderr = _clip(executed["stderr"])
         exit_code = executed["exit_code"]
-        passed = (expected_stdout in (executed["stdout"] or "")
-                  and exit_code == 0 and not executed["timed_out"])
-        detail = (
-            f"executed: {executed['command']}"
-            if passed else
-            f"expected '{expected_stdout}' with exit code 0; got "
-            f"exit {exit_code}, stdout: {_clip(executed['stdout'], 300)!r}"
-            + (f"; stderr: {_clip(executed['stderr'], 300)!r}" if stderr else "")
-            + ("; TIMED_OUT" if executed["timed_out"] else ""))
+        if expected_stdout is None:
+            passed = exit_code == 0 and not executed["timed_out"]
+            detail = (
+                f"executed: {executed['command']}"
+                if passed else
+                f"declared command exited {exit_code}"
+                + (f", stdout: {_clip(executed['stdout'], 300)!r}" if stdout else "")
+                + (f", stderr: {_clip(executed['stderr'], 300)!r}" if stderr else "")
+                + ("; TIMED_OUT" if executed["timed_out"] else ""))
+        else:
+            passed = (expected_stdout in (executed["stdout"] or "")
+                      and exit_code == 0 and not executed["timed_out"])
+            detail = (
+                f"executed: {executed['command']}"
+                if passed else
+                f"expected '{expected_stdout}' with exit code 0; got "
+                f"exit {exit_code}, stdout: {_clip(executed['stdout'], 300)!r}"
+                + (f"; stderr: {_clip(executed['stderr'], 300)!r}" if stderr else "")
+                + ("; TIMED_OUT" if executed["timed_out"] else ""))
         return {
             "status": "PASSED" if passed else "FAILED",
             "stage": "execution",
@@ -276,3 +321,105 @@ def run_strands_verification(
             session.close()
         except Exception:
             pass
+
+
+def run_strands_verification(
+    workspace: str | Path,
+    *,
+    policy_name: str = "auto-write",
+    expected_stdout: str = "HACKASS_STRANDS_ROSIE_PROVEN",
+    proof_filename: str = DEFAULT_PROOF_FILENAME,
+    test_command: str = "",
+    model_id: str = DEFAULT_MODEL_ID,
+    region: str | None = None,
+    timeout_s: float = DEFAULT_TIMEOUT_S,
+    agent_factory: Callable[..., Any] | None = None,
+    shell_executor: Any = None,
+) -> dict[str, Any]:
+    """Run the M5 verification checks against *workspace*.
+
+    Always runs the proof-program check. When *test_command* is a
+    non-empty string (the BuildPrint's declared test command, e.g.
+    ``python -m pytest``), a second bounded agent turn executes it in
+    the SAME workspace; its real exit code decides that check.
+
+    ``shell_executor`` is a test seam only (ROSIE's established
+    ``RuntimeSession(shell_executor=...)`` pattern); live callers never
+    pass it, so the session's default executor runs and the real approval
+    policy governs every shell command.
+
+    Returns a bounded dictionary (never raises):
+
+    - no test command — exactly the historical single-check shape;
+    - with a test command — ``status`` PASSED only when every check
+      passed, ``checks`` carrying each check's full truthful result,
+      and the flat stdout/exit_code fields mirroring the decisive
+      (test-command) turn.
+
+    Any failure is truthful and names its stage.
+    """
+    workspace_path = Path(workspace).resolve()
+    if not workspace_path.is_dir():
+        return _failed("runtime", f"workspace does not exist: {workspace_path}")
+
+    proof = _run_agent_turn(
+        workspace_path,
+        prompt=VERIFY_PROMPT_TEMPLATE.format(filename=proof_filename),
+        system_prompt=VERIFY_SYSTEM_PROMPT_TEMPLATE.format(
+            filename=proof_filename),
+        expected_stdout=expected_stdout,
+        policy_name=policy_name,
+        model_id=model_id,
+        region=region,
+        timeout_s=timeout_s,
+        agent_factory=agent_factory,
+        shell_executor=shell_executor,
+    )
+
+    command = str(test_command or "").strip()
+    if not command:
+        return proof
+
+    test = _run_agent_turn(
+        workspace_path,
+        prompt=TEST_PROMPT_TEMPLATE.format(command=command),
+        system_prompt=TEST_SYSTEM_PROMPT_TEMPLATE.format(command=command),
+        expected_stdout=None,  # the real exit code decides
+        policy_name=policy_name,
+        model_id=model_id,
+        region=region,
+        timeout_s=timeout_s,
+        agent_factory=agent_factory,
+        shell_executor=shell_executor,
+    )
+
+    all_passed = proof["status"] == "PASSED" and test["status"] == "PASSED"
+    if all_passed:
+        detail = (f"proof program passed (exit 0); "
+                  f"declared test command passed (exit 0): {command}")
+    elif proof["status"] != "PASSED":
+        detail = f"proof program failed: {proof['detail']}; " \
+                 f"declared test command: {test['detail']}"
+    else:
+        detail = f"declared test command failed: {test['detail']}"
+
+    merged_tools = list(proof.get("selected_tools") or []) \
+        + list(test.get("selected_tools") or [])
+    return {
+        "status": "PASSED" if all_passed else "FAILED",
+        "stage": "tests" if proof["status"] == "PASSED" else proof["stage"],
+        "detail": _clip(detail),
+        "model_id": model_id,
+        "selected_tools": merged_tools,
+        "stdout": test.get("stdout") or "",
+        "stderr": test.get("stderr") or "",
+        "exit_code": test.get("exit_code"),
+        "stop_reason": test.get("stop_reason") or "",
+        "checks": {
+            "proof_program": proof,
+            "declared_test_command": {
+                **test,
+                "command": command,
+            },
+        },
+    }

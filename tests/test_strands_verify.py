@@ -217,3 +217,155 @@ class TestStrandsVerifyAdapter:
         assert result["status"] == "FAILED"
         assert result["stage"] == "agent_build"
         assert "bedrock down" in result["detail"]
+
+
+class _TwoTurnStubModel(Model):
+    """Turn 1: run the proof program. Turn 2: run the declared command.
+
+    Each turn issues exactly one rosie_run_shell toolUse carrying the
+    command the turn's prompt declared — proving the model received the
+    declared command as data and selected the execution capability.
+    """
+
+    def __init__(self, proof_command: str, test_command: str) -> None:
+        super().__init__()
+        if not hasattr(self, "config"):
+            self.config = {}
+        self.proof_command = proof_command
+        self.test_command = test_command
+        self.stream_calls = 0
+
+    def update_config(self, **model_config: Any) -> None:
+        self.config.update(model_config)
+
+    def get_config(self) -> dict[str, Any]:
+        return self.config
+
+    async def structured_output(self, *args: Any, **kwargs: Any) -> None:
+        raise NotImplementedError("not exercised by the M5 offline test")
+
+    async def stream(self, messages, tool_specs, system_prompt, **kwargs):
+        self.stream_calls += 1
+        has_tool_result = any(
+            block.get("toolResult")
+            for msg in messages
+            for block in msg.get("content", [])
+        )
+        if not has_tool_result:
+            command = (self.proof_command if self.stream_calls == 1
+                       else self.test_command)
+            yield {"messageStart": {"role": "assistant"}}
+            yield {
+                "contentBlockStart": {
+                    "start": {"toolUse": {
+                        "toolUseId": f"m5-stub-{self.stream_calls}",
+                        "name": "rosie_run_shell",
+                    }}
+                }
+            }
+            yield {
+                "contentBlockDelta": {"delta": {"toolUse": {
+                    "input": json.dumps({"command": command})}}}
+            }
+            yield {"contentBlockStop": {}}
+            yield {"messageStop": {"stopReason": "tool_use"}}
+            return
+        yield {"messageStart": {"role": "assistant"}}
+        yield {
+            "contentBlockDelta": {"delta": {"text": "done"}}}
+        yield {"contentBlockStop": {}}
+        yield {"messageStop": {"stopReason": "end_turn"}}
+
+
+class TestDeclaredTestCommandMode:
+    """M5 extension: the BuildPrint's declared test command runs through
+    the same bounded Strands turn; the real exit code decides."""
+
+    def test_declared_command_runs_as_second_turn_and_passes(
+            self, tmp_path):
+        ws = _delivered_workspace(tmp_path)
+        (ws / "test_probe.py").write_text(
+            "import sys\nprint('tests ok')\nsys.exit(0)\n", encoding="utf-8")
+        model = _TwoTurnStubModel(
+            f'python {DEFAULT_PROOF_FILENAME}', "python test_probe.py")
+        result = run_strands_verification(
+            ws, agent_factory=_factory(model), timeout_s=60,
+            test_command="python test_probe.py")
+        assert result["status"] == "PASSED"
+        checks = result["checks"]
+        assert checks["proof_program"]["status"] == "PASSED"
+        assert checks["declared_test_command"]["status"] == "PASSED"
+        assert checks["declared_test_command"]["command"] == "python test_probe.py"
+        # The decisive (test) turn's real evidence rides the flat fields.
+        assert result["exit_code"] == 0
+        assert "tests ok" in result["stdout"]
+        names = [t["name"] for t in result["selected_tools"]]
+        assert names.count("rosie_run_shell") >= 2
+
+    def test_declared_command_nonzero_exit_is_truthful_failure(
+            self, tmp_path):
+        ws = _delivered_workspace(tmp_path)
+        (ws / "test_probe.py").write_text(
+            "import sys\nsys.exit(2)\n", encoding="utf-8")
+        model = _TwoTurnStubModel(
+            f'python {DEFAULT_PROOF_FILENAME}', "python test_probe.py")
+        result = run_strands_verification(
+            ws, agent_factory=_factory(model), timeout_s=60,
+            test_command="python test_probe.py")
+        assert result["status"] == "FAILED"
+        assert result["stage"] == "tests"
+        assert result["exit_code"] == 2
+        check = result["checks"]["declared_test_command"]
+        assert check["status"] == "FAILED"
+        assert check["exit_code"] == 2
+        # The proof check stayed green; only the declared command failed.
+        assert result["checks"]["proof_program"]["status"] == "PASSED"
+
+    def test_both_checks_run_independently_and_merge_truthfully(
+            self, tmp_path):
+        ws = _delivered_workspace(tmp_path)
+        (ws / DEFAULT_PROOF_FILENAME).write_text(
+            "import sys\nsys.exit(9)\n", encoding="utf-8")
+        (ws / "test_probe.py").write_text(
+            "import sys\nprint('tests ok')\nsys.exit(0)\n", encoding="utf-8")
+        model = _TwoTurnStubModel(
+            f'python {DEFAULT_PROOF_FILENAME}', "python test_probe.py")
+        result = run_strands_verification(
+            ws, agent_factory=_factory(model), timeout_s=60,
+            test_command="python test_probe.py")
+        # Both checks run independently: each carries its own real
+        # evidence, and the merged status fails truthfully.
+        assert result["status"] == "FAILED"
+        assert result["stage"] == "execution"
+        assert result["checks"]["proof_program"]["exit_code"] == 9
+        assert result["checks"]["declared_test_command"]["status"] == "PASSED"
+        assert result["checks"]["declared_test_command"]["exit_code"] == 0
+
+    def test_no_test_command_keeps_historical_shape(self, tmp_path):
+        ws = _delivered_workspace(tmp_path)
+        model = _ShellStubModel(f'python {DEFAULT_PROOF_FILENAME}')
+        result = run_strands_verification(
+            ws, agent_factory=_factory(model), timeout_s=60)
+        assert "checks" not in result
+
+    def test_runaway_test_command_still_terminates_bounded(
+            self, tmp_path):
+        ws = _delivered_workspace(tmp_path)
+        (ws / "slow_tests.py").write_text(
+            "import time\ntime.sleep(30)\n", encoding="utf-8")
+        model = _TwoTurnStubModel(
+            f'python {DEFAULT_PROOF_FILENAME}', "python slow_tests.py")
+        result = run_strands_verification(
+            ws, agent_factory=_factory(model), timeout_s=3,
+            test_command="python slow_tests.py")
+        # The composite timeout bound is real: the agent-turn watchdog
+        # cancels at Strands step boundaries, and ROSIE's shell executor
+        # enforces its own 30s ceiling on the in-flight command. The
+        # runaway is killed, TIMED_OUT surfaces, and the check fails.
+        assert result["status"] == "FAILED"
+        check = result["checks"]["declared_test_command"]
+        assert check["exit_code"] == -1
+        assert check["status"] == "FAILED"
+        assert check["stdout"] == "(empty)"
+        # The proof turn completed inside its own bound.
+        assert result["checks"]["proof_program"]["status"] == "PASSED"
