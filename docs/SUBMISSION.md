@@ -180,7 +180,9 @@ Recommended demo spine:
 
 ## Architecture diagram
 
-See [ARCHITECTURE.md](ARCHITECTURE.md).
+![ROSIE + HACKASS Architecture](Architecture.png)
+
+See [ARCHITECTURE.md](ARCHITECTURE.md) for the detailed architecture notes.
 
 ## Submission checklist
 
@@ -190,8 +192,8 @@ See [ARCHITECTURE.md](ARCHITECTURE.md).
 - [x] Amazon Bedrock / Nova Micro verified live
 - [x] pre-existing HACKASS disclosed
 - [x] README/setup documentation updated
-- [ ] publish the current Strands branch as the submission/default repository state
-- [ ] finalize architecture diagram asset
+- [x] current Strands submission state published on `main`
+- [x] architecture diagram asset added and referenced
 - [ ] record/upload public demo video
 - [ ] add video URL
 - [ ] enter AWS Builder ID email
