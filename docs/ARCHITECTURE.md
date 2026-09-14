@@ -1,316 +1,208 @@
-# Architecture
+# ROSIE Architecture
 
-ROSIE is the local-machine bridge/runtime in the HACKASS software-construction stack.
+ROSIE is the local-machine runtime and authority boundary for agentic software work.
 
-Its architectural responsibility is locality: translate authorized engineering work into operations on the machine where the project, repository, shell, and tools actually live.
+Its job is locality: bind an agent to the selected local workspace, expose bounded machine capabilities, preserve approval policy, and return truthful execution evidence.
 
-## Product architecture
-
-```text
-Human
-  ↓
-HACKASS
-  human intent / conversation / product decisions
-  ↓
-ARCHESTRATOR
-  engineering plan / work / execution state / verification
-  ↓
-ROSIE
-  local-machine translation / authority boundary / controlled action
-  ↓
-Local machine
-  files / Git / shell / tools / runtime
-```
-
-These responsibilities are intentionally separate.
-
-### HACKASS
-
-HACKASS is the user-facing program.
-
-The user communicates with HACKASS in ordinary language. HACKASS carries product intent and material user decisions into the engineering stack.
-
-### ARCHESTRATOR
-
-ARCHESTRATOR is the engineering engine.
-
-It manages the structured engineering process around approved intent: plans, work, execution state, verification, persistence, continuation, and the record of what actually happened.
-
-### ROSIE
-
-ROSIE is the local-machine bridge/runtime.
-
-It does not decide what product the user wants and does not replace ARCHESTRATOR's engineering lifecycle. It provides the controlled path from authorized engineering work to machine operations.
-
-## Current implementation boundary
-
-The current repository contains a standalone local ROSIE runtime plus the Google hackathon integration used to demonstrate HACKASS.
-
-The standalone runtime can itself call a model and iterate through tools. That is a useful operating and development mode, but it does not redefine the product boundary: in the broader architecture, ROSIE's durable responsibility is the local side of execution.
-
-## Standalone local execution flow
+## Submission architecture
 
 ```mermaid
 flowchart TD
-    U[Local operator / CLI] --> C[wrapper.cli]
-    C --> M[LiteLLM completion]
-    M --> L{Tool calls?}
-    L -- No --> R[Final text response]
-    L -- Yes --> D[dispatch_tool]
-    D --> V[Pydantic argument validation]
-    V --> P[Approval policy when required]
-    P --> T[ROSIE local tool]
-    T --> W[Local workspace / shell / Git]
-    W --> O[Tool result]
-    O --> C
+    U[Human] --> H[HACKASS - pre-existing upstream builder]
+    H --> BP[BuildPrint + deterministic build delivery]
+    BP --> R[ROSIE local runtime]
+    R --> S[Strands Agents]
+    S --> B[Amazon Bedrock]
+    B --> N[Amazon Nova Micro]
+    S --> T[ROSIE capability adapters]
+    T --> D[ROSIE runtime dispatch]
+    D --> A{Approval required?}
+    A -- yes --> HU[Human approval]
+    HU --> X[Local shell / Git / workspace tools]
+    A -- no --> X
+    X --> E[stdout / stderr / exit / timeout evidence]
+    E --> R
+    R --> H
 ```
 
-This flow is the current standalone implementation of ROSIE's local action surface.
+## Responsibility boundaries
 
-## Main local modules
+### HACKASS
 
-### `wrapper/cli.py`
+HACKASS is a pre-existing upstream software-construction system. In the hackathon demonstration it produces the build, BuildPrint metadata, and delivery event consumed by ROSIE.
 
-Owns the standalone CLI and local iterative loop.
+HACKASS is disclosed as pre-existing work.
 
-Responsibilities include:
+### ROSIE
 
-- parsing CLI arguments;
-- establishing the workspace root;
-- choosing approval mode;
-- constructing the standalone model chain;
-- passing local tool schemas to the model;
-- resolving iterative tool calls;
-- preserving conversation and tool-result state during a session; and
-- stopping on a final response or iteration limit.
+ROSIE owns local-machine authority and workspace identity.
 
-### `wrapper/tools.py`
+ROSIE is responsible for:
 
-Owns the local action layer.
+- the selected local workspace;
+- runtime/session ownership;
+- local tool contracts;
+- approval enforcement;
+- shell execution;
+- local Git/workspace inspection;
+- timeout/output bounds; and
+- truthful local execution results.
 
-Responsibilities include:
+### Strands Agents
 
-- workspace-root state;
-- safe path resolution for bounded file tools;
-- Pydantic argument models;
-- tool registry and dispatch;
-- directory and workspace search;
-- file inspection;
-- write previews;
-- file writes;
-- targeted patches;
-- Git status / diff / log inspection; and
-- shell execution.
+Strands provides the agent loop used for local post-delivery verification.
 
-### `wrapper/policy.py`
+Strands receives ROSIE-owned capabilities. It does not bypass ROSIE with direct machine access.
 
-Owns mutating-action approval behavior for the local side.
+### Amazon Bedrock / Nova Micro
 
-Modes:
+The verified live submission path uses:
 
-- `ask`
-- `auto-write`
-- `yolo`
+```text
+us.amazon.nova-micro-v1:0
+```
 
-Approval is enforced close to the mutating local action rather than relying only on model instructions.
+through Amazon Bedrock.
 
-### `wrapper/system_prompt.py`
+## Runtime ownership
 
-Provides the compact standalone ROSIE operating prompt. It tells the local model to inspect before modifying, prefer native/read-only inspection tools, never invent results, and only claim verified work.
+A `RuntimeSession` binds execution to the selected workspace and owns the runtime-specific execution dependencies used by ROSIE.
 
-### PEEP integration
+The important invariant is:
 
-The standalone runtime can attach PEEP as the shell observation path. If PEEP is unavailable, ROSIE reports the fallback and continues with the subprocess executor.
+```text
+delivery workspace == ROSIE RuntimeSession workspace == Strands execution workspace
+```
 
-PEEP is observation around execution; it does not replace ROSIE's locality role or ARCHESTRATOR's engineering responsibility.
+The submission path does not create a second project directory for verification.
 
-### Task telemetry and RATTER
+## Capability bridge
 
-Every standalone turn (`wrapper/cli.py:_run_turn`) is assigned a unique `task_id` (`task_<uuid>`) recorded in a lightweight runtime context (`wrapper/rt_context.py`). That id is telemetry plumbing only — it is never exposed to the model as a tool argument. All of a turn's shell commands, PEEP sessions, and RATTER telemetry events share the id, so a downstream observer can correlate a single user request with every machine action it caused.
+`wrapper/strands_bridge.py` exposes ROSIE capabilities to Strands as agent tools.
 
-PEEP events are forwarded to ROSIE's RATTER operational record through an asynchronous sink (`wrapper/ratter_async.py`). A bounded queue accepts events from the execution thread and a background worker writes batches into the in-process RATTER core (`wrapper/ratter_core.py`) - no separately-running RATTER server or HTTP round trip is required for the standard local path; setting `RATTER_URL` opts into the optional HTTP integration with a standalone RATTER server. Enqueue is non-blocking, the queue is bounded, and any RATTER failure is non-fatal: telemetry dropping never breaks command execution.
+Examples include:
 
-Shell results carry two hardening properties shared by both the PEEP and the subprocess executors:
+- `rosie_inspect_git_status`
+- `rosie_run_shell`
 
-- an explicit `TIMED_OUT: true|false` marker on every result, with an explicit timeout error message — a timeout is never inferred from an ambiguous exit code;
-- bounded output (head + tail, with an explicit truncation marker) so a model never receives an unbounded result payload.
-
-## Local tool boundary
-
-The current local tool registry exposes bounded workspace discovery and file operations (including `move_path` and `delete_path`), Git inspection, and shell execution.
-
-`TOOL_REGISTRY` maps tool names to executable Python functions.
-
-`TOOL_MODELS` maps tool names to Pydantic request models.
-
-`TOOL_SCHEMAS` provides the model-visible tool contracts.
-
-`dispatch_tool()` is the central execution entry point.
-
-## Workspace boundary
-
-Explicit file and workspace tools resolve paths against a configured workspace root and reject traversal outside it.
-
-The workspace root is a hard filesystem boundary:
-
-every ROSIE file and path validation check in this layer resolves the target through a single shared safe-path helper, `_resolve_safe_path`, which canonicalizes the path against the configured workspace root and rejects anything that does not resolve strictly inside it. The same helper is also used by `_resolve_safe_path_no_follow` (for link-aware mutations) and by the persistent `$SCRATCH` workspace. The boundary accounts for `..` traversal, absolute paths, drive-qualified and UNC-style paths that leave the root, mixed separators, OS junctions/symlinks, and - implicitly - other reparse tricks because resolution of the final path is compared against the effective resolved workspace root, not just string prefix-matching.
-
-This applies to all ROSIE filesystem tools:
-
-- directory listing;
-- recursive file search;
-- file inspection;
-- previews and writes;
-- patching;
-- moving;
-- deletion;
-- path-filtered Git inspection.
-
-The shell execution boundary is narrower and must be stated explicitly: ROSIE's local shell executor starts every command in the workspace root as its working directory, and every tool argument that names a path inside the workspace is enforced against it through the same safe-path guard. But a PowerShell command itself is unrestricted user input: ROSIE cannot remove rights the host process user already allows, so a single command that references an absolute path outside the workspace can still reach it from the OS side. This is not presented as escaped-event detection; it is the precise shell-frontier limitation of a local-authority runtime that runs real PowerShell.
-
-See [SECURITY.md](SECURITY.md).
+Tool execution routes back through ROSIE runtime dispatch, preserving ROSIE's policy and executor ownership.
 
 ## Approval boundary
 
-Mutating local operations enforce the active policy at execution time.
+ROSIE supports local approval modes including `ask`, `auto-write`, and `yolo`.
 
-That boundary matters because ROSIE is the layer where requested engineering work crosses into actual machine authority.
-
-See [APPROVAL_MODES.md](APPROVAL_MODES.md).
-
-## Standalone model boundary
-
-The standalone CLI currently uses LiteLLM as a provider abstraction.
-
-That is an implementation detail of standalone ROSIE operation, not a requirement that ROSIE own reasoning in the complete HACKASS stack.
-
-In the hackathon path, Google ADK and Gemini provide the reasoning/framework path while local actions are delegated into the incorporated execution surface.
-
-## State
-
-The current standalone ROSIE runtime keeps local session state in process memory, including:
-
-- conversation messages;
-- current approval mode;
-- workspace root; and
-- active standalone model chain.
-
-The local core does not currently require a database, queue, or remote state store.
-
-## Integration seams
-
-Important local integration points include:
-
-- local model invocation in standalone mode;
-- the iterative tool resolution loop;
-- model-visible tool schemas;
-- tool registry / dispatch;
-- approval policy; and
-- the workspace boundary.
-
-These seams allow higher-level systems to use ROSIE's local action surface without requiring ROSIE to become the higher-level product or engineering engine.
-
-# HACKASS hackathon integration
-
-The repository also contains hackathon-created code that integrates Google ADK and Gemini with the incorporated ARCHESTRATOR/local execution foundation.
-
-## Hackathon-facing execution chain
-
-The current deployed path is:
+The hackathon proof uses `auto-write`:
 
 ```text
-Browser / HACKASS interface
-  ↓
-Firebase Hosting
-  ↓
-Cloud Run
-  ↓
-server.py / POST /execute
-  ↓
-HACKASS run_hackass()
-  ↓
-Google ADK
-  ↓
-Gemini 3.7 Flash / Vertex AI
-  ↓
-HACKASS bridge
-  ↓
-incorporated ARCHESTRATOR tool layer
-  ↓
-workspace available to the deployed runtime
-  ↓
-result returned to HACKASS/browser
+file writes        → automatically approved
+shell execution    → explicit human approval required
 ```
 
-This path demonstrates HACKASS, Google ADK, Gemini, and real tool execution.
+Approval is enforced at the execution boundary. It is not merely a prompt instruction to the model.
 
-It should not be confused with a completed web-to-an-external-user-machine transport.
+## Post-delivery verification
 
-## Locality distinction
+`wrapper/strands_verify.py` runs two independent verification turns when the build declares a test command.
 
-A Cloud Run container has a local filesystem of its own. Executing tools inside that container proves real execution in the deployed runtime, but it does not prove that the cloud application can directly operate a separate user's laptop or desktop.
+### Proof-program check
 
-ROSIE's product architecture fills that locality boundary:
+The Strands agent locates and actually executes the delivered proof program through `rosie_run_shell`.
+
+The returned result must come from the execution itself, not from merely locating or listing the file.
+
+### Declared-test-command check
+
+The BuildPrint's declared test command is carried as build metadata and executed after delivery through Strands and ROSIE.
+
+Example:
 
 ```text
-Web-side HACKASS / ARCHESTRATOR
-  ↓
-verified ROSIE connection
-  ↓
-ROSIE process on user's machine
-  ↓
-user's authorized local workspace and tools
+python -m pytest
 ```
 
-That web-to-user-machine path must only be described as live once the ROSIE connection/transport is actually implemented, attached, and verified.
+The agent may locate the real project root before running the declared command, but it must execute that command rather than substitute a different verification.
 
-Until then, the hackathon deployment should be described factually as operating on the workspace available to its deployed runtime.
+## Artifact identity
 
-## Provenance boundary
+The Strands verification layer is intentionally post-delivery.
 
-For the Google All Things Agentic submission:
-
-- **HACKASS** — newly created hackathon user-facing project/integration.
-- **ARCHESTRATOR** — pre-existing engineering/execution software incorporated into the submission and disclosed.
-- **ROSIE** — local-machine bridge/runtime product role represented by the local execution surface in this repository.
-
-The hackathon repository temporarily colocates implementation from these responsibilities. Colocation does not make the responsibilities identical.
-
-## Hackathon-created Google integration
-
-The `hackass/` package contains the hackathon-specific Google path:
-
-- `hackass/config.py` — Gemini / Vertex configuration;
-- `hackass/agent.py` — Google ADK agent factory and runner;
-- `hackass/bridge.py` — ADK-to-existing-tool adapter;
-- `hackass/run.py` — hackathon CLI entry point.
-
-The bridge delegates actions into the existing tool dispatch layer rather than duplicating the file, Git, shell, and approval behavior.
-
-## Google Cloud deployment
-
-Current hackathon deployment:
-
-| Field | Value |
-|---|---|
-| Service | `rosie-api` |
-| Cloud Run region | `us-central1` |
-| Google Cloud project | `rosie-fire` |
-| Gemini model | `gemini-3.7-flash` |
-| Vertex location | `global` |
-| Hosting | Firebase Hosting |
-| Container registry | Artifact Registry |
-
-Firebase Hosting serves the static browser surface and proxies `/health` and `/execute` to Cloud Run.
-
-The Google deployment is a hackathon infrastructure choice. ROSIE's local-machine role is not conceptually tied to Google Cloud.
-
-## Architectural rule of thumb
-
-When describing the system, use the responsibility chain rather than the repository layout:
+The frozen build/manifest determines what bytes were delivered. The declared test command is metadata and does not alter the manifest hash.
 
 ```text
-HACKASS      = the human talks here
-ARCHESTRATOR = engineering is managed here
-ROSIE        = authorized work reaches the local machine here
+frozen delivered bytes
+        ↓
+materialize locally
+        ↓
+Strands/ROSIE execute and verify
 ```
+
+Strands is not allowed to rewrite the delivered program as part of verification.
+
+## Truthful result model
+
+Each check returns execution evidence including:
+
+- status;
+- command/tool execution detail;
+- stdout;
+- stderr;
+- exit code; and
+- timeout truth where applicable.
+
+Independent checks are merged without hiding failure. A delivery can remain successfully delivered even if post-delivery verification fails.
+
+## Bounded execution
+
+Agent turns use bounded watchdog behavior, while ROSIE's shell executor owns the in-flight command timeout ceiling.
+
+This preserves two separate bounds:
+
+- the agent turn cannot run forever; and
+- a shell command cannot run forever.
+
+Timeouts are reported as execution truth rather than converted into a fabricated success.
+
+## Local tool layer
+
+The broader ROSIE runtime exposes bounded capabilities for:
+
+- directory/workspace search;
+- file inspection;
+- write preview and file mutation;
+- moving and deleting paths;
+- Git status/diff/log inspection; and
+- shell execution.
+
+File/path tools enforce the configured workspace boundary. Shell execution begins in the bound workspace, but the shell remains real host authority: ROSIE cannot remove permissions already granted to the operating-system user.
+
+See [SECURITY.md](SECURITY.md) for the precise boundary.
+
+## Standalone ROSIE mode
+
+ROSIE can also operate as a standalone local agent through its CLI and LiteLLM provider abstraction.
+
+That mode is useful for development and direct local use, but it is separate from the Agents for Humans submission path.
+
+```text
+standalone operator
+→ LiteLLM/model
+→ ROSIE tools
+→ local machine
+```
+
+The hackathon path is:
+
+```text
+HACKASS delivery
+→ ROSIE
+→ Strands Agents
+→ Bedrock / Nova Micro
+→ ROSIE tools
+→ local machine
+```
+
+## Legacy repository assets
+
+The repository contains older Google hackathon code and documentation from earlier development. Those assets are not the technology path submitted for Agents for Humans.
+
+The current submission is the ROSIE + Strands + Amazon Bedrock/Nova local execution and verification path documented here.
