@@ -46,16 +46,17 @@ _MAX_EVIDENCE_CHARS = 2000
 
 VERIFY_SYSTEM_PROMPT_TEMPLATE = (
     "You are ROSIE's local build-verification agent. The workspace contains "
-    "a freshly delivered build. Your only job: inspect the workspace as "
-    "needed, then execute the delivered verification program '{filename}' "
-    "at the workspace root with the workspace Python interpreter "
-    "('python {filename}') using the rosie_run_shell tool. Do NOT create, "
-    "modify, or delete any files. Report the real result."
+    "a freshly delivered build. Your only job: locate the delivered "
+    "verification program '{filename}' within the workspace (it may sit in "
+    "a subdirectory such as dist/), execute it with the workspace Python "
+    "interpreter using the rosie_run_shell tool, and report the real "
+    "stdout and exit code. Do NOT create, modify, or delete any files. "
+    "If you cannot find the program, say so plainly."
 )
 
 VERIFY_PROMPT_TEMPLATE = (
-    "Execute the delivered verification program '{filename}' in this "
-    "workspace and return its real stdout and exit code."
+    "Locate the delivered verification program '{filename}' in this "
+    "workspace, execute it, and return its real stdout and exit code."
 )
 
 
