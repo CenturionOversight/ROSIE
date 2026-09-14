@@ -18,10 +18,11 @@ M1B proved the read-only leg (``inspect_git_status``); M3 adds exactly one
 mutating capability: ``write_file``.  Exposed ROSIE tools:
 
 - ``rosie_inspect_git_status`` — read-only Git status of the workspace;
-- ``rosie_write_file`` — UTF-8 text write inside the workspace boundary.
+- ``rosie_write_file`` — UTF-8 text write inside the workspace boundary;
+- ``rosie_run_shell`` — workspace-rooted shell execution through ROSIE's
+  approval policy and session shell executor.
 
-Deliberately not bridged: ``run_shell``, ``apply_patch``, ``move_path``,
-``delete_path``.
+Deliberately not bridged: ``apply_patch``, ``move_path``, ``delete_path``.
 """
 from __future__ import annotations
 
@@ -32,7 +33,7 @@ from strands.tools.decorator import tool
 from wrapper.runtime import RuntimeSession
 from wrapper.tools import dispatch_tool
 
-__all__ = ["create_rosie_tools", "rosie_inspect_git_status", "rosie_write_file"]
+__all__ = ["create_rosie_tools", "rosie_inspect_git_status", "rosie_write_file", "rosie_run_shell"]
 
 
 def rosie_inspect_git_status(session: RuntimeSession):
@@ -103,6 +104,45 @@ def rosie_write_file(session: RuntimeSession):
     return _rosie_write_file
 
 
+def rosie_run_shell(session: RuntimeSession):
+    """Create a Strands tool that executes a shell command via ROSIE.
+
+    The returned callable is a Strands-decorated tool whose implementation
+    delegates to ``wrapper.tools.dispatch_tool("run_shell", ...)`` with
+    *session* as the runtime owner.  It spawns no subprocess itself — ROSIE
+    owns the approval policy (shell commands are prompted under ``ask`` and
+    ``auto-write``; only ``yolo`` runs silently) and the configured session
+    shell executor, which runs in the session workspace root.
+
+    Args:
+        session: RuntimeSession owning the target workspace.
+
+    Returns:
+        A Strands tool callable.
+    """
+
+    @tool(
+        name="rosie_run_shell",
+        description=(
+            "Execute a shell command in the ROSIE-managed workspace "
+            "(working directory is the workspace root). Subject to ROSIE's "
+            "approval policy. Returns STDOUT/STDERR/EXIT_CODE."
+        ),
+    )
+    def _rosie_run_shell(command: str, timeout: int | None = None) -> str:
+        """Delegate to the ROSIE dispatch boundary under the session."""
+        args = {"command": command}
+        if timeout is not None:
+            args["timeout"] = timeout
+        return dispatch_tool(
+            "run_shell",
+            args,
+            runtime=session,
+        )
+
+    return _rosie_run_shell
+
+
 def create_rosie_tools(session: RuntimeSession) -> list[Any]:
     """Create the M1B ROSIE tool set for a Strands Agent.
 
@@ -110,10 +150,11 @@ def create_rosie_tools(session: RuntimeSession) -> list[Any]:
         session: RuntimeSession owning the selected workspace.
 
     Returns:
-        List of Strands tool callables (read-only Git status + workspace-
-        bounded text write).
+        List of Strands tool callables (read-only Git status, workspace-
+        bounded text write, workspace-rooted shell execution).
     """
     return [
         rosie_inspect_git_status(session),
         rosie_write_file(session),
+        rosie_run_shell(session),
     ]

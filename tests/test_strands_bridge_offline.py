@@ -1,4 +1,4 @@
-"""M1B/M3 offline verification of the Strands → ROSIE execution seam.
+"""M1B/M3/M4 offline verification of the Strands → ROSIE execution seam.
 
 OFFLINE / STUB MODEL — this test uses a deterministic stub Strands Model
 instead of Amazon Bedrock.  It proves:
@@ -30,6 +30,7 @@ from wrapper.runtime import RuntimeSession  # noqa: E402
 from wrapper.strands_bridge import (  # noqa: E402
     create_rosie_tools,
     rosie_inspect_git_status,
+    rosie_run_shell,
     rosie_write_file,
 )
 
@@ -186,7 +187,8 @@ def test_offline_agent_selects_rosie_tool(session, monkeypatch, git_status_stub)
     assert tool_names == [
         "rosie_inspect_git_status",
         "rosie_write_file",
-    ], "M3 exposes exactly the read-only status tool + the bounded write tool"
+        "rosie_run_shell",
+    ], "M4 exposes status + bounded write + workspace-rooted shell tools"
 
     stub = _StubToolUseModel()
     agent = Agent(
@@ -204,6 +206,7 @@ def test_offline_agent_selects_rosie_tool(session, monkeypatch, git_status_stub)
     assert set(stub.stream_calls[0]["tool_spec_names"]) == {
         "rosie_inspect_git_status",
         "rosie_write_file",
+        "rosie_run_shell",
     }
 
     # The call reached wrapper.tools.dispatch_tool exactly once.
@@ -314,6 +317,60 @@ class _StubWriteModel(_StubToolUseModel):
             }
             yield {"contentBlockStop": {}}
             yield {"messageStop": {"stopReason": "end_turn"}}
+
+
+def test_rosie_run_shell_forwards_to_dispatch(session, monkeypatch):
+    """Focused M4 checks: the rosie_run_shell adapter forwards the exact
+    command and timeout to dispatch_tool with tool name ``run_shell`` and
+    passes the SAME RuntimeSession; ROSIE's real run_shell machinery then
+    executes through the session-owned executor."""
+    dispatch_calls: list[dict[str, Any]] = []
+    _dispatch_spy(monkeypatch, dispatch_calls)
+
+    seen: list[tuple[str, int]] = []
+
+    def fake_executor(command: str, timeout: int) -> str:
+        seen.append((command, timeout))
+        return f"fake-exec:{command}:{timeout}"
+
+    session.set_shell_executor(fake_executor)
+
+    tool = rosie_run_shell(session)
+    out = tool(command="echo hello-m4", timeout=7)
+
+    assert dispatch_calls == [
+        {
+            "name": "run_shell",
+            "args": {"command": "echo hello-m4", "timeout": 7},
+            "runtime": session,
+        }
+    ]
+    assert seen == [("echo hello-m4", 7)]
+    assert out == "fake-exec:echo hello-m4:7"
+
+
+def test_rosie_run_shell_default_omits_timeout(session, monkeypatch):
+    """Without a timeout argument the adapter forwards only the command and
+    ROSIE applies its own default (30s) executor timeout."""
+    dispatch_calls: list[dict[str, Any]] = []
+    _dispatch_spy(monkeypatch, dispatch_calls)
+
+    def fake_executor(command: str, timeout: int) -> str:
+        return f"ran:{command}"
+
+    session.set_shell_executor(fake_executor)
+
+    tool = rosie_run_shell(session)
+    out = tool(command="echo default-case")
+
+    assert dispatch_calls == [
+        {
+            "name": "run_shell",
+            "args": {"command": "echo default-case"},
+            "runtime": session,
+        }
+    ]
+    assert out == "ran:echo default-case"
 
 
 def test_offline_agent_write_flow(session, monkeypatch):
