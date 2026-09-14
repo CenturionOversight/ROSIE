@@ -1,8 +1,6 @@
 # Testing
 
-ROSIE has an automated pytest suite covering the standalone local runtime, tool behavior, approval and security boundaries, context handling, Git/workspace inspection, PEEP integration, and the HACKASS Google integration path.
-
-Testing here verifies implementation behavior. It does not collapse the product boundaries: HACKASS remains the user-facing program, ARCHESTRATOR the engineering engine, and ROSIE the local-machine bridge/runtime.
+ROSIE uses pytest to verify the local runtime, workspace/tool boundaries, approval behavior, runtime ownership, and Strands integration.
 
 ## Run the suite
 
@@ -10,88 +8,59 @@ Testing here verifies implementation behavior. It does not collapse the product 
 python -m pytest tests/ -v
 ```
 
-## Current verified baseline
+## Submission-focused verification
 
-The current baseline documented by the repository is:
+The Agents for Humans path has focused tests for:
 
-```text
-348 discovered
-347 passed
-0 failed
-1 skipped
+- `RuntimeSession` workspace ownership;
+- concurrent runtime isolation;
+- Strands tool bridging;
+- ROSIE runtime dispatch through Strands;
+- proof-program execution;
+- optional BuildPrint-declared test-command execution;
+- independent per-check truth merging;
+- real exit-code handling;
+- bounded watchdog/timeout behavior; and
+- backward-compatible behavior when no declared test command is present.
+
+Run the focused Strands verification tests with:
+
+```bash
+python -m pytest tests/test_strands_verify.py -v
 ```
 
-The skipped case is the platform-dependent symlink escape test on Windows.
+Related focused suites include:
 
-## Coverage areas
+```bash
+python -m pytest tests/test_strands_bridge_offline.py -v
+python -m pytest tests/test_runtime_session.py -v
+python -m pytest tests/test_runtime_concurrency.py -v
+```
 
-The suite currently covers areas including:
+## What the tests prove
 
-### Standalone local agent loop
+The submission-specific tests verify that:
 
-- direct final responses;
-- iterative tool calls;
-- multiple tool calls;
-- conversation and tool-result propagation;
-- bounded iteration behavior;
-- retained final responses;
-- deterministic context compaction; and
-- operating system prompt behavior.
+1. Strands receives ROSIE capabilities rather than bypassing ROSIE;
+2. local execution routes through runtime-owned dispatch;
+3. the bound workspace is preserved;
+4. proof and declared-test checks are independent;
+5. non-zero exits remain failures;
+6. timeouts remain visible as timeouts; and
+7. historical single-check behavior still works when no test command is supplied.
 
-### Local workspace and file actions
+## Live verification
 
-- directory discovery;
-- workspace search;
-- file inspection;
-- write previews;
-- full file writes;
-- targeted patching;
-- path traversal protections; and
-- local workspace boundary behavior.
+The hackathon evidence is not based only on unit tests.
 
-### Git inspection
+The end-to-end live path was exercised with real Strands Agents, Amazon Bedrock, Amazon Nova Micro, ROSIE approval prompts, local shell execution, proof-program execution, and declared pytest execution.
 
-- working-tree status;
-- staged and unstaged diffs;
-- recent history;
-- path filtering; and
-- read-only error handling.
+The final verified composite lap passed both the proof check and the declared-test check.
 
-### Approval policy
+## Legacy tests
 
-- `ask`;
-- `auto-write`;
-- `yolo`;
-- prompt decisions;
-- live escalation through `[a]lways`; and
-- enforcement close to mutating local actions.
-
-### Model/provider boundary
-
-- standalone LiteLLM completion behavior;
-- fallback handling;
-- provider/runtime failures; and
-- tool-schema delivery.
-
-### PEEP and execution visibility
-
-- PEEP shell integration;
-- fallback behavior when PEEP is unavailable; and
-- visible attachment/fallback reporting.
-
-### HACKASS / Google integration
-
-- Google ADK integration seams;
-- Gemini configuration path;
-- bridge delegation into the incorporated execution surface; and
-- HTTP/browser execution boundary behavior.
-
-## Shared fixtures
-
-Tests reset module-level local workspace, policy, and related runtime state between cases and use temporary workspaces where appropriate.
+The repository also contains tests for older standalone and prior hackathon integrations. Those remain useful regression coverage but are not the technology path being submitted for Agents for Humans.
 
 ## Verification policy
 
-Focused tests are appropriate for isolated changes.
-
-Run the full suite at meaningful integration milestones, before a submission or release boundary, and whenever changes touch shared execution, local tools, approval policy, provider behavior, HACKASS integration, or the web/runtime boundary.
+Use focused tests for isolated changes. Run broader regression at integration, release, and submission boundaries or when a failure indicates wider impact.
