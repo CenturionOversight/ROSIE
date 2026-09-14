@@ -151,7 +151,9 @@ The submission-specific Strands verification tests cover the two-turn verificati
 
 ## Architecture
 
-See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+![ROSIE + HACKASS Architecture](docs/Architecture.png)
+
+See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the detailed architecture notes.
 
 At the product level:
 
@@ -166,6 +168,7 @@ ROSIE owns locality and local machine authority. HACKASS remains the upstream bu
 - [Agents for Humans submission context](docs/HACKATHON.md)
 - [Devpost submission draft](docs/SUBMISSION.md)
 - [Architecture](docs/ARCHITECTURE.md)
+- [Architecture diagram](docs/Architecture.png)
 - [Approval modes](docs/APPROVAL_MODES.md)
 - [Security boundaries](docs/SECURITY.md)
 - [Tools](docs/TOOLS.md)
